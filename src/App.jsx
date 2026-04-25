@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import {
   Grid3x3, Eye, Layers, Play, Pause, RotateCcw, ChevronRight,
   Box, Network, GitBranch, Move, BookOpen,
-  ArrowRight, Hash, Crosshair, Workflow, Microscope, Sparkles
+  ArrowRight, Hash, Crosshair, Workflow, Microscope, Sparkles,
+  Upload, Loader2, Brain, Cpu
 } from 'lucide-react';
 
 /* =========================================================
@@ -2203,27 +2204,509 @@ function ProsItem({ children }) {
 }
 
 /* =========================================================
+   LIVE DEMO — interactive image scan + classifier
+   ========================================================= */
+
+const GALLERY = [
+  { id: 'cat',      name: 'Cute Cat', src: import.meta.env.BASE_URL + 'cat.jpg' },
+  { id: 'baiwan',   name: 'Baiwan',   src: import.meta.env.BASE_URL + 'baiwan.jpg' },
+  { id: 'miaomiao', name: 'Miaomiao', src: import.meta.env.BASE_URL + 'miaomiao.jpg' },
+];
+
+const SIM_PREDS = {
+  cat: [
+    { label: 'tabby cat',    score: 0.72 },
+    { label: 'tiger cat',    score: 0.18 },
+    { label: 'Egyptian cat', score: 0.06 },
+    { label: 'lynx',         score: 0.02 },
+    { label: 'Persian cat',  score: 0.02 },
+  ],
+  baiwan: [
+    { label: 'tabby cat',    score: 0.55 },
+    { label: 'Egyptian cat', score: 0.22 },
+    { label: 'tiger cat',    score: 0.13 },
+    { label: 'Persian cat',  score: 0.06 },
+    { label: 'Siamese cat',  score: 0.04 },
+  ],
+  miaomiao: [
+    { label: 'tabby cat',    score: 0.61 },
+    { label: 'tiger cat',    score: 0.19 },
+    { label: 'Egyptian cat', score: 0.11 },
+    { label: 'lynx',         score: 0.05 },
+    { label: 'Persian cat',  score: 0.04 },
+  ],
+};
+
+const SIM_FALLBACK = [
+  { label: 'unknown',     score: 0.40 },
+  { label: 'tabby cat',   score: 0.20 },
+  { label: 'tiger cat',   score: 0.15 },
+  { label: 'lynx',        score: 0.10 },
+  { label: 'Persian cat', score: 0.05 },
+];
+
+function drawScan(canvas, img, size, patchPx, progress, mode) {
+  if (!canvas || !img) return;
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const w = img.naturalWidth || img.width;
+  const h = img.naturalHeight || img.height;
+  const crop = Math.min(w, h);
+  ctx.drawImage(img, (w - crop) / 2, (h - crop) / 2, crop, crop, 0, 0, size, size);
+  ctx.fillStyle = 'rgba(10,14,26,0.40)';
+  ctx.fillRect(0, 0, size, size);
+
+  const gridN = Math.max(2, Math.floor(size / patchPx));
+  const total = gridN * gridN;
+  const seen = Math.min(total, Math.floor(progress * total));
+  const cur = Math.max(0, seen - 1);
+  const cx = cur % gridN;
+  const cy = Math.floor(cur / gridN);
+  const baseColor = mode === 'vit' ? '245, 158, 11' : '20, 184, 166';
+
+  ctx.strokeStyle = `rgba(${baseColor}, 0.18)`;
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= gridN; i++) {
+    const p = i * patchPx;
+    ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, size); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(size, p); ctx.stroke();
+  }
+
+  if (mode === 'swin') {
+    const winSize = 4;
+    const wins = Math.ceil(gridN / winSize);
+    ctx.strokeStyle = `rgba(${baseColor}, 0.55)`;
+    ctx.lineWidth = 2;
+    for (let i = 0; i <= wins; i++) {
+      const p = Math.min(i * winSize * patchPx, size);
+      ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, size); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(size, p); ctx.stroke();
+    }
+    const visited = new Set();
+    for (let i = 0; i < seen; i++) {
+      const px = i % gridN;
+      const py = Math.floor(i / gridN);
+      visited.add(Math.floor(py / winSize) * wins + Math.floor(px / winSize));
+    }
+    visited.forEach(wid => {
+      const wxx = wid % wins;
+      const wyy = Math.floor(wid / wins);
+      ctx.fillStyle = `rgba(${baseColor}, 0.06)`;
+      ctx.fillRect(wxx * winSize * patchPx, wyy * winSize * patchPx, winSize * patchPx, winSize * patchPx);
+    });
+  } else {
+    for (let i = 0; i < seen; i++) {
+      const px = (i % gridN) * patchPx;
+      const py = Math.floor(i / gridN) * patchPx;
+      ctx.fillStyle = `rgba(${baseColor}, 0.10)`;
+      ctx.fillRect(px, py, patchPx, patchPx);
+    }
+  }
+
+  if (seen > 0) {
+    const qx = cx * patchPx + patchPx / 2;
+    const qy = cy * patchPx + patchPx / 2;
+
+    if (mode === 'vit') {
+      ctx.strokeStyle = `rgba(${baseColor}, 0.16)`;
+      ctx.lineWidth = 0.5;
+      for (let j = 0; j < total; j++) {
+        if (j === cur) continue;
+        const tx = (j % gridN) * patchPx + patchPx / 2;
+        const ty = Math.floor(j / gridN) * patchPx + patchPx / 2;
+        ctx.beginPath(); ctx.moveTo(qx, qy); ctx.lineTo(tx, ty); ctx.stroke();
+      }
+    } else {
+      const winSize = 4;
+      const wx = Math.floor(cx / winSize);
+      const wy = Math.floor(cy / winSize);
+      ctx.fillStyle = `rgba(${baseColor}, 0.18)`;
+      ctx.fillRect(wx * winSize * patchPx, wy * winSize * patchPx, winSize * patchPx, winSize * patchPx);
+      ctx.strokeStyle = `rgba(${baseColor}, 1)`;
+      ctx.lineWidth = 2.5;
+      ctx.strokeRect(wx * winSize * patchPx, wy * winSize * patchPx, winSize * patchPx, winSize * patchPx);
+      ctx.strokeStyle = `rgba(${baseColor}, 0.5)`;
+      ctx.lineWidth = 0.7;
+      for (let py = wy * winSize; py < (wy + 1) * winSize && py < gridN; py++) {
+        for (let px = wx * winSize; px < (wx + 1) * winSize && px < gridN; px++) {
+          if (px === cx && py === cy) continue;
+          const tx = px * patchPx + patchPx / 2;
+          const ty = py * patchPx + patchPx / 2;
+          ctx.beginPath(); ctx.moveTo(qx, qy); ctx.lineTo(tx, ty); ctx.stroke();
+        }
+      }
+    }
+
+    ctx.fillStyle = 'rgba(245, 158, 11, 0.35)';
+    ctx.fillRect(cx * patchPx, cy * patchPx, patchPx, patchPx);
+    ctx.strokeStyle = 'rgba(245, 158, 11, 1)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(cx * patchPx, cy * patchPx, patchPx, patchPx);
+  }
+}
+
+function PredictionBars({ preds, accent }) {
+  const max = (preds && preds[0]?.score) || 1;
+  return (
+    <div className="space-y-2">
+      {(preds || []).map((p, i) => (
+        <div key={`${p.label}-${i}`}>
+          <div className="flex justify-between text-[13px] mb-1">
+            <span className="text-slate-200 truncate pr-2">{p.label}</span>
+            <span className={`font-mono ${accent === 'teal' ? 'text-teal-300' : 'text-amber-300'}`}>
+              {(p.score * 100).toFixed(1)}%
+            </span>
+          </div>
+          <div className="h-1.5 bg-slate-800 rounded overflow-hidden">
+            <div
+              className={`h-full transition-all duration-300 ${
+                i === 0
+                  ? (accent === 'teal' ? 'bg-teal-400' : 'bg-amber-400')
+                  : (accent === 'teal' ? 'bg-teal-400/40' : 'bg-amber-400/40')
+              }`}
+              style={{ width: `${(p.score / max) * 100}%` }}
+            />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LiveDemoTab() {
+  const [galleryId, setGalleryId] = useState('cat');
+  const [customSrc, setCustomSrc] = useState(null);
+  const imgSrc = customSrc || GALLERY.find(g => g.id === galleryId)?.src;
+  const imgName = customSrc ? 'your image' : (GALLERY.find(g => g.id === galleryId)?.name || 'image');
+
+  const [patchSize, setPatchSize] = useState(36);
+  const [progress, setProgress] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [mode, setMode] = useState('simulated');
+
+  const [realPreds, setRealPreds] = useState(null);
+  const [realStatus, setRealStatus] = useState('idle');
+  const [realProgress, setRealProgress] = useState(0);
+  const [realMessage, setRealMessage] = useState('');
+  const classifierRef = useRef(null);
+
+  const vitRef = useRef();
+  const swinRef = useRef();
+  const imgRef = useRef();
+
+  const reset = useCallback(() => { setProgress(0); setPlaying(false); }, []);
+
+  useEffect(() => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      imgRef.current = img;
+      drawScan(vitRef.current, img, 360, patchSize, progress, 'vit');
+      drawScan(swinRef.current, img, 360, patchSize, progress, 'swin');
+    };
+    img.src = imgSrc;
+    setRealPreds(null);
+    setRealStatus('idle');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imgSrc]);
+
+  useEffect(() => {
+    if (!imgRef.current) return;
+    drawScan(vitRef.current, imgRef.current, 360, patchSize, progress, 'vit');
+    drawScan(swinRef.current, imgRef.current, 360, patchSize, progress, 'swin');
+  }, [patchSize, progress]);
+
+  useEffect(() => {
+    if (!playing) return;
+    const id = setInterval(() => {
+      setProgress(p => {
+        const next = p + 0.012;
+        if (next >= 1) { setPlaying(false); return 1; }
+        return next;
+      });
+    }, 50);
+    return () => clearInterval(id);
+  }, [playing]);
+
+  const baseSim = customSrc ? SIM_FALLBACK : (SIM_PREDS[galleryId] || SIM_FALLBACK);
+  const animatedSim = baseSim.map(p => ({
+    ...p,
+    score: progress < 0.05 ? 0 : p.score * Math.min(1, (progress - 0.05) / 0.95),
+  }));
+
+  async function runReal() {
+    if (realStatus === 'loading') return;
+    setRealStatus('loading');
+    setRealPreds(null);
+    setRealProgress(0);
+    try {
+      if (!classifierRef.current) {
+        setRealMessage('Loading transformers.js…');
+        const mod = await import('@huggingface/transformers');
+        mod.env.allowLocalModels = false;
+        setRealMessage('Downloading ViT-Base/16 weights (~88 MB, cached after first run)…');
+        classifierRef.current = await mod.pipeline(
+          'image-classification',
+          'Xenova/vit-base-patch16-224',
+          {
+            progress_callback: (data) => {
+              if (data.status === 'progress') {
+                setRealProgress(Math.round(data.progress || 0));
+              }
+            },
+          }
+        );
+      }
+      setRealMessage('Running inference…');
+      const out = await classifierRef.current(imgSrc, { topk: 5 });
+      setRealPreds(out);
+      setRealStatus('ready');
+      setRealMessage('');
+    } catch (err) {
+      console.error(err);
+      setRealStatus('error');
+      setRealMessage(String(err.message || err));
+    }
+  }
+
+  const showPreds = mode === 'real' ? realPreds : animatedSim;
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <span className="font-mono text-[10px] tracking-[0.3em] text-amber-400/70 uppercase">Live demo</span>
+        <h2 className="font-serif text-3xl text-slate-100 mt-1 mb-2 tracking-tight">
+          Watch the model look at a cat
+        </h2>
+        <p className="text-slate-300/90 leading-relaxed max-w-2xl">
+          Pick an image, hit play, and see how Vision Transformer (ViT) and Swin Transformer
+          scan it patch by patch. ViT lets every patch attend to every other; Swin keeps
+          attention inside local windows. The probability bars below show the model's confidence
+          in each class.
+        </p>
+      </div>
+
+      <Card className="p-5">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {GALLERY.map(g => (
+            <button
+              key={g.id}
+              onClick={() => { setCustomSrc(null); setGalleryId(g.id); reset(); }}
+              className={`relative rounded-lg overflow-hidden border-2 aspect-square transition-all
+                ${!customSrc && galleryId === g.id ? 'border-amber-400 shadow-lg shadow-amber-500/10' : 'border-slate-700 hover:border-slate-500'}`}
+            >
+              <img src={g.src} alt={g.name} className="w-full h-full object-cover" />
+              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/95 to-transparent px-2 py-1.5 text-left">
+                <span className="text-[11px] font-mono text-slate-100">{g.name}</span>
+              </div>
+            </button>
+          ))}
+          <label className={`relative rounded-lg overflow-hidden border-2 transition-all flex items-center justify-center cursor-pointer aspect-square
+            ${customSrc ? 'border-amber-400 shadow-lg shadow-amber-500/10' : 'border-dashed border-slate-700 hover:border-slate-500 bg-slate-800/30'}`}>
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={e => {
+                const f = e.target.files?.[0];
+                if (!f) return;
+                const url = URL.createObjectURL(f);
+                setCustomSrc(url);
+                reset();
+              }}
+            />
+            {customSrc ? (
+              <>
+                <img src={customSrc} alt="custom" className="w-full h-full object-cover" />
+                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/95 to-transparent px-2 py-1.5 text-left">
+                  <span className="text-[11px] font-mono text-slate-100">Your image</span>
+                </div>
+              </>
+            ) : (
+              <div className="text-center">
+                <Upload size={20} className="mx-auto mb-1 text-slate-400" />
+                <span className="text-[11px] font-mono text-slate-400">Upload</span>
+              </div>
+            )}
+          </label>
+        </div>
+      </Card>
+
+      <div className="grid lg:grid-cols-2 gap-4">
+        <Card className="p-5">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Tag color="amber">ViT</Tag>
+              <span className="text-sm text-slate-200">Global Attention</span>
+            </div>
+            <span className="text-[10px] font-mono text-slate-500 uppercase">O(N²)</span>
+          </div>
+          <canvas ref={vitRef} className="w-full rounded-lg bg-slate-950 aspect-square" />
+          <p className="text-[12px] text-slate-400 mt-3 leading-relaxed">
+            Lines from the bright patch reach <em>every</em> other patch. Expensive, but lets
+            distant pixels talk directly.
+          </p>
+        </Card>
+        <Card className="p-5">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Tag color="teal">Swin</Tag>
+              <span className="text-sm text-slate-200">Windowed Attention</span>
+            </div>
+            <span className="text-[10px] font-mono text-slate-500 uppercase">O(N)</span>
+          </div>
+          <canvas ref={swinRef} className="w-full rounded-lg bg-slate-950 aspect-square" />
+          <p className="text-[12px] text-slate-400 mt-3 leading-relaxed">
+            Attention stays inside the bright 4×4 window. Cheaper at high resolution; later
+            layers <em>shift</em> windows to mix neighbours.
+          </p>
+        </Card>
+      </div>
+
+      <Card className="p-5">
+        <div className="flex flex-wrap items-end gap-5">
+          <div className="flex gap-2">
+            <button
+              onClick={() => { if (progress >= 1) setProgress(0); setPlaying(p => !p); }}
+              className="px-3.5 py-2 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-200 flex items-center gap-1.5 text-sm font-medium transition-all"
+            >
+              {playing ? <Pause size={14}/> : <Play size={14}/>}
+              {playing ? 'Pause' : (progress >= 1 ? 'Replay scan' : 'Play scan')}
+            </button>
+            <button
+              onClick={reset}
+              className="px-3.5 py-2 rounded-lg bg-slate-800/60 hover:bg-slate-800 border border-slate-700 text-slate-300 flex items-center gap-1.5 text-sm transition-all"
+            >
+              <RotateCcw size={14}/> Reset
+            </button>
+          </div>
+          <div className="flex-1 min-w-[200px]">
+            <Slider
+              label="Scan Progress"
+              value={Math.round(progress * 100)}
+              min={0} max={100} suffix="%"
+              onChange={v => { setPlaying(false); setProgress(v / 100); }}
+            />
+          </div>
+          <div className="flex-1 min-w-[200px]">
+            <Slider
+              label="Patch Size (px)"
+              value={patchSize}
+              options={[24, 36, 60]}
+              onChange={v => { setPatchSize(v); reset(); }}
+            />
+          </div>
+        </div>
+      </Card>
+
+      <Card className="p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div className="flex items-center gap-2">
+            <Brain size={18} className="text-amber-300"/>
+            <h3 className="font-serif text-lg text-slate-100">Predictions</h3>
+            <span className="text-[11px] font-mono text-slate-500">on {imgName}</span>
+          </div>
+          <div className="flex gap-1 bg-slate-800/60 rounded-lg p-1 border border-slate-700/60">
+            <button
+              onClick={() => setMode('simulated')}
+              className={`px-3 py-1.5 rounded-md text-[11px] font-mono tracking-wider transition-all
+                ${mode === 'simulated' ? 'bg-amber-500/25 text-amber-200 shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+            >
+              SIMULATED
+            </button>
+            <button
+              onClick={() => setMode('real')}
+              className={`px-3 py-1.5 rounded-md text-[11px] font-mono tracking-wider transition-all flex items-center gap-1
+                ${mode === 'real' ? 'bg-teal-500/25 text-teal-200 shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+            >
+              <Cpu size={11}/> REAL CLASSIFIER
+            </button>
+          </div>
+        </div>
+
+        {mode === 'real' && (
+          <div className="mb-4 p-3 rounded-lg bg-slate-800/40 border border-slate-700/60">
+            {realStatus === 'idle' && (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-[13px] text-slate-300">
+                  Runs <span className="text-teal-300 font-medium">ViT-Base/16</span> in your browser via transformers.js.
+                  First load downloads ~88 MB, cached afterward.
+                </p>
+                <button onClick={runReal}
+                  className="px-3 py-1.5 rounded-lg bg-teal-500/20 hover:bg-teal-500/30 border border-teal-500/50 text-teal-100 text-sm whitespace-nowrap transition-all">
+                  Run on this image
+                </button>
+              </div>
+            )}
+            {realStatus === 'loading' && (
+              <div>
+                <div className="flex items-center gap-2 text-[13px] text-slate-300 mb-2">
+                  <Loader2 size={14} className="animate-spin text-teal-300"/>
+                  <span>{realMessage}</span>
+                </div>
+                <div className="h-1.5 bg-slate-700/60 rounded overflow-hidden">
+                  <div className="h-full bg-teal-400 transition-all" style={{ width: `${realProgress}%` }}/>
+                </div>
+              </div>
+            )}
+            {realStatus === 'ready' && (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-[13px] text-teal-200">Real ViT-Base/16 prediction · model cached.</p>
+                <button onClick={runReal}
+                  className="px-3 py-1.5 rounded-lg bg-teal-500/20 hover:bg-teal-500/30 border border-teal-500/50 text-teal-100 text-sm whitespace-nowrap transition-all">
+                  Re-run
+                </button>
+              </div>
+            )}
+            {realStatus === 'error' && (
+              <p className="text-[13px] text-rose-300">Error: {realMessage}</p>
+            )}
+          </div>
+        )}
+
+        {mode === 'real' && !realPreds ? (
+          <p className="text-sm text-slate-500 text-center py-6">
+            {realStatus === 'idle' ? 'Click "Run on this image" to get a real ViT prediction.' : ''}
+          </p>
+        ) : (
+          <PredictionBars preds={showPreds} accent={mode === 'real' ? 'teal' : 'amber'} />
+        )}
+
+        <p className="text-[11px] font-mono text-slate-500 mt-4">
+          {mode === 'simulated'
+            ? '// Simulated probabilities — illustrative only, scaled by scan progress.'
+            : '// Real predictions from Xenova/vit-base-patch16-224 (ImageNet-1K).'}
+        </p>
+      </Card>
+    </div>
+  );
+}
+
+/* =========================================================
    ROOT
    ========================================================= */
 
 const TABS = [
-  { id: 'overview', label: 'Overview', icon: BookOpen },
-  { id: 'patch', label: 'Patch Embedding', icon: Grid3x3 },
-  { id: 'pos', label: 'Position + CLS', icon: Hash },
-  { id: 'attn', label: 'Self-Attention', icon: Eye },
-  { id: 'mha', label: 'Multi-Head', icon: Network },
-  { id: 'pipeline', label: 'ViT Pipeline', icon: Workflow },
-  { id: 'window', label: 'Windows (Swin)', icon: Box },
-  { id: 'shifted', label: 'Shifted Windows', icon: Move },
-  { id: 'hier', label: 'Hierarchy', icon: GitBranch },
-  { id: 'compare', label: 'ViT vs Swin', icon: Microscope },
+  { id: 'live',     label: 'Live Demo',       icon: Sparkles },
+  { id: 'overview', label: 'Overview',        icon: BookOpen },
+  { id: 'patch',    label: 'Patch Embedding', icon: Grid3x3 },
+  { id: 'pos',      label: 'Position + CLS',  icon: Hash },
+  { id: 'attn',     label: 'Self-Attention',  icon: Eye },
+  { id: 'mha',      label: 'Multi-Head',      icon: Network },
+  { id: 'pipeline', label: 'ViT Pipeline',    icon: Workflow },
+  { id: 'window',   label: 'Windows (Swin)',  icon: Box },
+  { id: 'shifted',  label: 'Shifted Windows', icon: Move },
+  { id: 'hier',     label: 'Hierarchy',       icon: GitBranch },
+  { id: 'compare',  label: 'ViT vs Swin',     icon: Microscope },
 ];
 
 export default function App() {
-  const [tab, setTab] = useState('overview');
+  const [tab, setTab] = useState('live');
 
   const render = () => {
     switch (tab) {
+      case 'live': return <LiveDemoTab />;
       case 'overview': return <OverviewTab />;
       case 'patch': return <PatchTab />;
       case 'pos': return <PositionTab />;
@@ -2234,7 +2717,7 @@ export default function App() {
       case 'shifted': return <ShiftedTab />;
       case 'hier': return <HierarchyTab />;
       case 'compare': return <CompareTab />;
-      default: return <OverviewTab />;
+      default: return <LiveDemoTab />;
     }
   };
 
