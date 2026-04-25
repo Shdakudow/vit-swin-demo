@@ -3130,7 +3130,7 @@ function drawMatrix(canvas, A, progress, mode) {
   }
 }
 
-/* drawClassHeatmap — given the precomputed ViT attention matrix
+/* drawClassHeatmap — given the precomputed attention matrix
    (MAT_N × MAT_N grid), render the image with a heatmap overlay
    highlighting which regions the model "looked at". We use the
    column-sums of the attention matrix as a proxy for [CLS] attention:
@@ -3143,12 +3143,12 @@ function drawClassHeatmap(canvas, img, attentionRows, gridN, intensity = 1) {
   canvas.height = size;
   const ctx = canvas.getContext('2d');
 
-  // Draw image dimmed, so the heatmap reads on top.
+  // Draw image strongly dimmed — the heatmap needs to dominate.
   const w = img.naturalWidth || img.width;
   const h = img.naturalHeight || img.height;
   const crop = Math.min(w, h);
   ctx.drawImage(img, (w - crop) / 2, (h - crop) / 2, crop, crop, 0, 0, size, size);
-  ctx.fillStyle = 'rgba(10, 14, 26, 0.55)';
+  ctx.fillStyle = 'rgba(10, 14, 26, 0.78)';
   ctx.fillRect(0, 0, size, size);
 
   const total = gridN * gridN;
@@ -3156,79 +3156,241 @@ function drawClassHeatmap(canvas, img, attentionRows, gridN, intensity = 1) {
   for (let i = 0; i < total; i++) {
     for (let j = 0; j < total; j++) colSums[j] += attentionRows[i][j];
   }
-  let maxV = 1e-9;
-  for (let i = 0; i < total; i++) if (colSums[i] > maxV) maxV = colSums[i];
+  // Min-max normalize so the colormap stretches across the full range.
+  let minV = Infinity, maxV = -Infinity;
+  for (let i = 0; i < total; i++) {
+    if (colSums[i] < minV) minV = colSums[i];
+    if (colSums[i] > maxV) maxV = colSums[i];
+  }
+  const span = Math.max(1e-9, maxV - minV);
 
-  // Bilinearly upsample to a smooth heat overlay.
+  // Five-stop magma-ish colormap so peaks read clearly even at small sizes.
+  // Stops:   t=0  → very dark (almost black)
+  //          t=.25 → deep purple
+  //          t=.5  → magenta
+  //          t=.75 → orange
+  //          t=1.0 → bright yellow
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function colormap(t) {
+    const stops = [
+      [0.00,  10,  10,  30],
+      [0.25,  50,  10,  90],
+      [0.50, 200,  40, 110],
+      [0.75, 250, 130,  40],
+      [1.00, 255, 240, 100],
+    ];
+    for (let s = 1; s < stops.length; s++) {
+      if (t <= stops[s][0]) {
+        const a = stops[s - 1], b = stops[s];
+        const u = (t - a[0]) / (b[0] - a[0]);
+        return [lerp(a[1], b[1], u), lerp(a[2], b[2], u), lerp(a[3], b[3], u)];
+      }
+    }
+    return [stops[stops.length - 1][1], stops[stops.length - 1][2], stops[stops.length - 1][3]];
+  }
+
   const cell = size / gridN;
   for (let py = 0; py < gridN; py++) {
     for (let px = 0; px < gridN; px++) {
-      const v = colSums[py * gridN + px] / maxV;
-      const t = Math.pow(v, 1.6) * intensity;
-      // amber → red gradient as t grows
-      const r = 245, g = 158 - t * 80, b = 11 + t * 40;
-      const a = Math.min(0.78, t * 0.95);
-      ctx.fillStyle = `rgba(${r}, ${g | 0}, ${b | 0}, ${a})`;
+      const v = (colSums[py * gridN + px] - minV) / span;
+      const t = Math.pow(v, 2.5) * intensity;
+      const [r, g, b] = colormap(t);
+      // Alpha climbs aggressively so high-attention patches are nearly opaque.
+      const a = 0.15 + Math.min(0.78, t * 0.85);
+      ctx.fillStyle = `rgba(${r | 0}, ${g | 0}, ${b | 0}, ${a})`;
       ctx.fillRect(px * cell - 0.5, py * cell - 0.5, cell + 1, cell + 1);
     }
   }
 
-  // Soft-blur the heatmap by drawing a translucent blurred copy.
-  ctx.filter = 'blur(6px)';
+  // Soft-blur for smooth-feeling edges.
+  ctx.filter = 'blur(7px)';
   ctx.globalCompositeOperation = 'screen';
   ctx.drawImage(canvas, 0, 0);
   ctx.filter = 'none';
   ctx.globalCompositeOperation = 'source-over';
 }
 
-/* MiniArch — small horizontal flow diagram that lights up as the scan
-   progresses, framing the attention matrix as one step inside a larger
-   neural-network pipeline:
-       N patches → encoder × L → CLS → linear classifier → top class.
-   This is what "how the matrix is applied" looks like at the model level. */
+/* MiniArch — concrete neural-network sketch. Tokens are rendered as
+   colored bars so it's clear they're vectors. The encoder is a tiny
+   bipartite graph showing every token attending to every token (which
+   IS what self-attention does). Then CLS gets extracted, multiplied by
+   the classifier weight matrix, and turned into class probabilities. */
 function MiniArch({ progress, topPred }) {
-  const stage = progress >= 0.99
+  const stage = progress >= 0.95
     ? 4
     : progress >= 0.7 ? 3
     : progress >= 0.4 ? 2
     : progress >= 0.1 ? 1 : 0;
 
-  const ArchBox = ({ children, sub, active, highlight, accent = 'amber' }) => {
-    const palette = {
-      amber: 'border-amber-500/50 bg-amber-500/15 text-amber-100',
-      rose:  'border-rose-500/50 bg-rose-500/15 text-rose-100',
-      teal:  'border-teal-500/50 bg-teal-500/15 text-teal-100',
-    };
+  const TokenBar = ({ hue, dim = false, cls = false, glow = false }) => (
+    <div
+      className={`w-12 h-2 rounded-sm transition-all
+        ${cls ? 'ring-1 ring-rose-300' : ''}
+        ${glow ? 'shadow shadow-rose-500/50' : ''}`}
+      style={{
+        background: dim
+          ? 'rgba(100,116,139,0.18)'
+          : cls
+            ? 'rgba(244,63,94,0.85)'
+            : `linear-gradient(to right, hsl(${hue}, 65%, 55%), hsl(${(hue + 50) % 360}, 60%, 50%))`,
+        opacity: dim ? 0.5 : 1,
+      }}
+    />
+  );
+  const Arr = ({ on }) => (
+    <div className={`text-xl font-mono shrink-0 ${on ? 'text-amber-400' : 'text-slate-700'}`}>→</div>
+  );
+  const Label = ({ children, color = 'slate' }) => (
+    <div className={`text-[10px] font-mono uppercase tracking-wider mb-1.5 text-${color}-400/80 text-center`}>
+      {children}
+    </div>
+  );
+
+  // Encoder block: a bipartite graph of input tokens → output tokens
+  // with all-to-all attention edges. SVG so it scales cleanly.
+  const Encoder = ({ active }) => {
+    const NODES = 6;
+    const W = 110, H = 84;
+    const inX = 14, outX = W - 14;
+    const ySpacing = (H - 16) / (NODES - 1);
+    const ys = Array.from({ length: NODES }, (_, i) => 8 + i * ySpacing);
     return (
       <div
-        className={`flex flex-col items-center justify-center px-3 py-2 rounded-lg border min-w-[96px] text-center transition-all
+        className={`relative rounded-lg border px-2 py-2 transition-all
           ${active
-            ? `${palette[accent]} ${highlight ? 'shadow-md scale-[1.03]' : ''}`
-            : 'bg-slate-800/30 border-slate-700/60 text-slate-500'}`}
+            ? 'bg-amber-500/10 border-amber-500/50'
+            : 'bg-slate-800/30 border-slate-700/60'}`}
       >
-        <div className="text-[12px] font-mono leading-tight">{children}</div>
-        {sub && <div className="text-[9px] font-mono mt-0.5 opacity-70">{sub}</div>}
+        <svg width={W} height={H} className="block">
+          {/* Edges: every input → every output (self-attention) */}
+          {active && ys.flatMap((y1, i) =>
+            ys.map((y2, j) => (
+              <line
+                key={`e-${i}-${j}`}
+                x1={inX} y1={y1} x2={outX} y2={y2}
+                stroke="rgba(245,158,11,0.18)"
+                strokeWidth="0.5"
+              />
+            ))
+          )}
+          {/* Input nodes */}
+          {ys.map((y, i) => (
+            <circle
+              key={`l-${i}`}
+              cx={inX} cy={y} r={3}
+              fill={active ? '#fbbf24' : '#475569'}
+              opacity={active ? 0.9 : 0.6}
+            />
+          ))}
+          {/* Output nodes */}
+          {ys.map((y, i) => (
+            <circle
+              key={`r-${i}`}
+              cx={outX} cy={y} r={3}
+              fill={active ? '#fbbf24' : '#475569'}
+              opacity={active ? 0.9 : 0.6}
+            />
+          ))}
+        </svg>
+        <div className="absolute -bottom-4 left-0 right-0 text-center text-[9px] font-mono text-amber-300/70">
+          × L blocks
+        </div>
       </div>
     );
   };
-  const Arr = ({ active }) => (
-    <div className={`text-lg font-mono ${active ? 'text-amber-400' : 'text-slate-700'}`}>→</div>
+
+  // Linear classifier: small W matrix with arrows in/out
+  const Linear = ({ active }) => (
+    <div
+      className={`rounded-lg border px-2 py-2 transition-all flex flex-col items-center
+        ${active
+          ? 'bg-amber-500/10 border-amber-500/50'
+          : 'bg-slate-800/30 border-slate-700/60'}`}
+    >
+      <div className="grid grid-cols-4 gap-px">
+        {Array.from({ length: 12 }).map((_, i) => (
+          <div
+            key={i}
+            className="w-2 h-2 rounded-[1px]"
+            style={{
+              background: active
+                ? `hsl(${(i * 25) % 360}, 60%, 55%)`
+                : 'rgba(100,116,139,0.3)',
+              opacity: active ? 0.85 : 0.4,
+            }}
+          />
+        ))}
+      </div>
+      <div className={`text-[9px] font-mono mt-1.5 ${active ? 'text-amber-200' : 'text-slate-500'}`}>
+        W ∈ ℝ^(D × C)
+      </div>
+    </div>
   );
 
   return (
-    <div className="flex items-stretch justify-between gap-2 flex-wrap">
-      <ArchBox active={stage >= 0} highlight={stage === 0} sub="image → tokens">N patches</ArchBox>
-      <Arr active={stage >= 1}/>
-      <ArchBox active={stage >= 1} highlight={stage === 1} sub="self-attention">Encoder × L</ArchBox>
-      <Arr active={stage >= 2}/>
-      <ArchBox active={stage >= 2} highlight={stage === 2} sub="aggregated" accent="rose">[CLS]</ArchBox>
-      <Arr active={stage >= 3}/>
-      <ArchBox active={stage >= 3} highlight={stage === 3} sub="D → C">Linear</ArchBox>
-      <Arr active={stage >= 4}/>
-      <ArchBox active={stage >= 4} highlight={stage === 4} accent="teal"
-        sub={topPred ? `${(topPred.score * 100).toFixed(0)}%` : ''}>
-        {topPred ? topPred.label : 'top class'}
-      </ArchBox>
+    <div className="flex items-end justify-between gap-2 flex-wrap">
+      {/* Patches → tokens */}
+      <div className="flex flex-col items-center pb-3">
+        <Label color={stage >= 0 ? 'amber' : 'slate'}>patches</Label>
+        <div className="space-y-1">
+          {[0, 1, 2, 3, 4, 5].map(i => (
+            <TokenBar key={i} hue={i * 50} dim={stage < 0}/>
+          ))}
+        </div>
+        <div className="text-[9px] font-mono text-slate-500 mt-1.5">N × D</div>
+      </div>
+
+      <Arr on={stage >= 1}/>
+
+      {/* Encoder block */}
+      <div className="flex flex-col items-center pb-3">
+        <Label color={stage >= 1 ? 'amber' : 'slate'}>self-attention</Label>
+        <Encoder active={stage >= 1}/>
+      </div>
+
+      <Arr on={stage >= 2}/>
+
+      {/* Output tokens with CLS extracted */}
+      <div className="flex flex-col items-center pb-3">
+        <Label color={stage >= 2 ? 'rose' : 'slate'}>extract [CLS]</Label>
+        <div className="space-y-1">
+          <TokenBar cls glow={stage >= 2} dim={stage < 2}/>
+          {[0, 1, 2, 3, 4].map(i => (
+            <TokenBar key={i} hue={i * 50 + 30} dim/>
+          ))}
+        </div>
+        <div className="text-[9px] font-mono text-slate-500 mt-1.5">1 × D</div>
+      </div>
+
+      <Arr on={stage >= 3}/>
+
+      {/* Linear classifier */}
+      <div className="flex flex-col items-center pb-3">
+        <Label color={stage >= 3 ? 'amber' : 'slate'}>classifier</Label>
+        <Linear active={stage >= 3}/>
+      </div>
+
+      <Arr on={stage >= 4}/>
+
+      {/* Top prediction */}
+      <div className="flex flex-col items-center pb-3">
+        <Label color={stage >= 4 ? 'teal' : 'slate'}>top class</Label>
+        <div
+          className={`px-3 py-2 rounded-lg border text-center min-w-[110px] transition-all
+            ${stage >= 4
+              ? 'bg-teal-500/15 border-teal-500/50 text-teal-100 shadow-md'
+              : 'bg-slate-800/30 border-slate-700/60 text-slate-500'}`}
+        >
+          <div className="text-[12px] font-mono leading-tight truncate">
+            {stage >= 4 && topPred ? topPred.label : '—'}
+          </div>
+          {stage >= 4 && topPred && (
+            <div className="text-[10px] font-mono opacity-80 mt-0.5">
+              {(topPred.score * 100).toFixed(0)}%
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -3282,7 +3444,8 @@ function LiveDemoTab() {
   const swinRef = useRef();
   const vitMatRef = useRef();
   const swinMatRef = useRef();
-  const heatRef = useRef();
+  const heatVitRef = useRef();
+  const heatSwinRef = useRef();
   const imgRef = useRef();
   const attnRef = useRef(null);
 
@@ -3298,7 +3461,8 @@ function LiveDemoTab() {
       drawScan(swinRef.current, img, 360, patchSize, progress, 'swin');
       drawMatrix(vitMatRef.current, attnRef.current?.vit, progress, 'vit');
       drawMatrix(swinMatRef.current, attnRef.current?.swin, progress, 'swin');
-      drawClassHeatmap(heatRef.current, img, attnRef.current?.vit, MAT_N, Math.max(0.15, progress));
+      drawClassHeatmap(heatVitRef.current, img, attnRef.current?.vit, MAT_N, Math.max(0.15, progress));
+      drawClassHeatmap(heatSwinRef.current, img, attnRef.current?.swin, MAT_N, Math.max(0.15, progress));
     };
     img.src = imgSrc;
     setRealPreds(null);
@@ -3312,7 +3476,8 @@ function LiveDemoTab() {
     drawScan(swinRef.current, imgRef.current, 360, patchSize, progress, 'swin');
     drawMatrix(vitMatRef.current, attnRef.current?.vit, progress, 'vit');
     drawMatrix(swinMatRef.current, attnRef.current?.swin, progress, 'swin');
-    drawClassHeatmap(heatRef.current, imgRef.current, attnRef.current?.vit, MAT_N, Math.max(0.15, progress));
+    drawClassHeatmap(heatVitRef.current, imgRef.current, attnRef.current?.vit, MAT_N, Math.max(0.15, progress));
+    drawClassHeatmap(heatSwinRef.current, imgRef.current, attnRef.current?.swin, MAT_N, Math.max(0.15, progress));
   }, [patchSize, progress]);
 
   useEffect(() => {
@@ -3472,34 +3637,57 @@ function LiveDemoTab() {
         </Card>
       </div>
 
-      {/* Class-attention heatmap + architecture flow — bridge from
-          "the matrix" to "and that's why the model predicts X". */}
-      <div className="grid lg:grid-cols-[auto_1fr] gap-4 items-stretch">
-        <Card className="p-4">
-          <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/80 mb-2">
+      {/* Class-attention heatmaps (ViT + Swin) — bridge from "the matrix"
+          to "and that's why the model predicts X". */}
+      <Card className="p-4">
+        <div className="flex items-baseline justify-between gap-3 mb-3 flex-wrap">
+          <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/80">
             What the model is looking at
           </div>
-          <canvas ref={heatRef} className="w-full max-w-[280px] mx-auto rounded bg-slate-950 aspect-square block" />
-          <p className="text-[11px] text-slate-400 mt-2 max-w-[280px] mx-auto leading-relaxed">
-            Bright regions = patches the attention matrix funnels information <em>into</em>.
-            That's where the [CLS] token gets most of its content from, and so it's what
-            ultimately drives the prediction.
-          </p>
-        </Card>
-
-        <Card className="p-4">
-          <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/80 mb-3">
-            How the matrix becomes a prediction
+          <span className="text-[11px] font-mono text-slate-500">
+            heatmap = column-sums of the attention matrix (proxy for [CLS] attention)
+          </span>
+        </div>
+        <div className="grid sm:grid-cols-2 gap-4">
+          <div className="text-center">
+            <div className="flex items-center justify-center gap-2 mb-2">
+              <Tag color="amber">ViT</Tag>
+              <span className="text-[11px] font-mono text-slate-400">global attention</span>
+            </div>
+            <canvas ref={heatVitRef} className="w-full max-w-[260px] mx-auto rounded bg-slate-950 aspect-square block" />
+            <p className="text-[11px] text-slate-400 mt-2 max-w-[260px] mx-auto leading-relaxed">
+              Smooth peaks anywhere on the image — every patch attends globally.
+            </p>
           </div>
-          <MiniArch progress={progress} topPred={(mode === 'real' ? realPreds : (customSrc ? SIM_FALLBACK : (SIM_PREDS[galleryId] || SIM_FALLBACK)))?.[0]} />
-          <p className="text-[12px] text-slate-400 mt-4 leading-relaxed">
-            The attention matrix you saw above is what happens <em>inside</em> the
-            "Encoder × L" box. After L blocks, the [CLS] token has gathered information
-            from every patch (weighted by attention). That single vector goes through one
-            linear layer to produce class scores — softmaxed into the bars below.
-          </p>
-        </Card>
-      </div>
+          <div className="text-center">
+            <div className="flex items-center justify-center gap-2 mb-2">
+              <Tag color="teal">Swin</Tag>
+              <span className="text-[11px] font-mono text-slate-400">windowed attention</span>
+            </div>
+            <canvas ref={heatSwinRef} className="w-full max-w-[260px] mx-auto rounded bg-slate-950 aspect-square block" />
+            <p className="text-[11px] text-slate-400 mt-2 max-w-[260px] mx-auto leading-relaxed">
+              Blockier — attention can't cross window boundaries, so peaks are bounded by 4×4 patch tiles.
+            </p>
+          </div>
+        </div>
+        <p className="text-[12px] text-slate-400 mt-3 leading-relaxed max-w-3xl mx-auto text-center">
+          Bright = patches that receive the most attention from all queries. That's where the model's
+          internal representation gets its content from, and therefore what drives the prediction.
+        </p>
+      </Card>
+
+      <Card className="p-4">
+        <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/80 mb-3">
+          How the matrix becomes a prediction
+        </div>
+        <MiniArch progress={progress} topPred={(mode === 'real' ? realPreds : (customSrc ? SIM_FALLBACK : (SIM_PREDS[galleryId] || SIM_FALLBACK)))?.[0]} />
+        <p className="text-[12px] text-slate-400 mt-5 leading-relaxed max-w-3xl">
+          The attention matrix lives <em>inside</em> the self-attention block. The bipartite graph above
+          is one such block: every input token (left) connects to every output token (right) via attention
+          weights. Stack <Eq>L</Eq> of these (≈12 for ViT-Base) — by the last layer the [CLS] vector has
+          summarized the whole image. A single linear layer turns it into class scores.
+        </p>
+      </Card>
 
       <Card className="p-5">
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
