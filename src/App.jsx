@@ -1719,7 +1719,14 @@ function PipelineTab() {
         </div>
       </div>
 
-      <Card className="p-6 min-h-[300px]">
+      <Card className="p-6">
+        <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/70 mb-3">
+          Stage {step + 1} · live data flow
+        </div>
+        <PipelineVisual step={step} />
+      </Card>
+
+      <Card className="p-6 min-h-[200px]">
         <PipelineDetail step={step} />
       </Card>
 
@@ -1727,6 +1734,264 @@ function PipelineTab() {
         <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-4">Inside one Transformer encoder block</div>
         <EncoderBlockDiagram />
       </Card>
+    </div>
+  );
+}
+
+/* PipelineVisual — dynamic per-stage visualization. Each step shows
+   the actual data transformation, not just text. The cat image enters
+   at stage 1 and morphs through patches → embeddings → tokens with
+   [CLS] → contextualized tokens → CLS-only readout → logits → softmax. */
+function PipelineVisual({ step }) {
+  const CAT = import.meta.env.BASE_URL + 'cat.jpg';
+
+  const Bar = ({ hue = 30, w = 'w-20', highlight = false, dim = false }) => (
+    <div
+      className={`${w} h-2.5 rounded-sm transition-all`}
+      style={{
+        background: dim
+          ? 'rgba(100,116,139,0.25)'
+          : `linear-gradient(to right, hsl(${hue}, 70%, 60%), hsl(${(hue + 60) % 360}, 65%, 50%))`,
+        opacity: dim ? 0.4 : 0.85,
+        outline: highlight ? '1.5px solid rgba(244, 63, 94, 0.9)' : 'none',
+        boxShadow: highlight ? '0 0 12px rgba(244, 63, 94, 0.4)' : 'none',
+      }}
+    />
+  );
+
+  const Cls = ({ glow = false, dim = false }) => (
+    <div
+      className={`w-20 h-2.5 rounded-sm flex items-center justify-center font-mono text-[7px] text-rose-50 transition-all
+        ${glow ? 'ring-2 ring-rose-300 shadow-lg shadow-rose-500/40' : 'ring-1 ring-rose-400/70'}
+        ${dim ? 'opacity-40' : ''}`}
+      style={{ background: dim ? 'rgba(244,63,94,0.20)' : 'rgba(244,63,94,0.75)' }}
+    >
+      CLS
+    </div>
+  );
+
+  const STACK_N = 8;
+
+  // ---- Stage 1: Image
+  if (step === 0) {
+    return (
+      <div className="flex items-center justify-center gap-8 min-h-[260px]">
+        <div className="text-center">
+          <div className="w-[200px] h-[200px] rounded-lg overflow-hidden ring-2 ring-amber-500/40">
+            <img src={CAT} alt="" className="w-full h-full object-cover"/>
+          </div>
+          <div className="font-mono text-[11px] text-amber-300 mt-2">H × W × 3</div>
+          <div className="font-mono text-[10px] text-slate-500">e.g. 224 × 224 × 3</div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Stage 2: Patchify
+  if (step === 1) {
+    return (
+      <div className="flex items-center justify-center gap-6 min-h-[260px]">
+        <div className="text-center">
+          <div className="relative w-[180px] h-[180px] rounded-lg overflow-hidden ring-1 ring-slate-600">
+            <img src={CAT} alt="" className="w-full h-full object-cover"/>
+            <svg className="absolute inset-0 w-full h-full">
+              {Array.from({ length: 13 }).map((_, i) => (
+                <g key={i}>
+                  <line x1={`${(i + 1) * (100 / 14)}%`} y1="0" x2={`${(i + 1) * (100 / 14)}%`} y2="100%" stroke="rgba(245,158,11,0.55)" strokeWidth="0.5"/>
+                  <line x1="0" y1={`${(i + 1) * (100 / 14)}%`} x2="100%" y2={`${(i + 1) * (100 / 14)}%`} stroke="rgba(245,158,11,0.55)" strokeWidth="0.5"/>
+                </g>
+              ))}
+            </svg>
+          </div>
+          <div className="font-mono text-[11px] text-amber-300 mt-2">14 × 14 patches</div>
+        </div>
+        <div className="text-amber-400 font-mono text-2xl">→</div>
+        <div>
+          <div className="space-y-1">
+            {Array.from({ length: STACK_N }).map((_, i) => <Bar key={i} hue={i * 35} w="w-20"/>)}
+            <div className="text-[10px] font-mono text-slate-500 text-center">…</div>
+          </div>
+          <div className="font-mono text-[11px] text-amber-300 mt-2">N × (P²·3)</div>
+          <div className="font-mono text-[10px] text-slate-500">196 × 768 (flattened)</div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Stage 3: Linear projection
+  if (step === 2) {
+    return (
+      <div className="flex items-center justify-center gap-6 min-h-[260px]">
+        <div>
+          <div className="space-y-1">
+            {Array.from({ length: STACK_N }).map((_, i) => <Bar key={i} hue={i * 35} w="w-20"/>)}
+          </div>
+          <div className="font-mono text-[11px] text-slate-400 mt-2">N × (P²·3)</div>
+          <div className="font-mono text-[10px] text-slate-500">flat patches</div>
+        </div>
+        <div className="text-center">
+          <div className="text-amber-400 font-mono text-xl">→</div>
+          <div className="px-3 py-1.5 rounded bg-amber-500/15 border border-amber-500/40 font-mono text-[11px] text-amber-200 mt-1">× E</div>
+          <div className="font-mono text-[9px] text-slate-500 mt-1">linear (shared)</div>
+        </div>
+        <div>
+          <div className="space-y-1">
+            {Array.from({ length: STACK_N }).map((_, i) => <Bar key={i} hue={i * 50 + 45} w="w-24"/>)}
+          </div>
+          <div className="font-mono text-[11px] text-amber-300 mt-2">N × D</div>
+          <div className="font-mono text-[10px] text-slate-500">196 × 768</div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Stage 4: + [CLS] + position
+  if (step === 3) {
+    return (
+      <div className="flex items-center justify-center gap-6 min-h-[260px]">
+        <div>
+          <div className="space-y-1">
+            {Array.from({ length: STACK_N }).map((_, i) => <Bar key={i} hue={i * 50 + 45} w="w-24"/>)}
+          </div>
+          <div className="font-mono text-[11px] text-slate-400 mt-2">N × D</div>
+        </div>
+        <div className="text-rose-300 font-mono text-2xl">+ CLS</div>
+        <div>
+          <div className="space-y-1">
+            <Cls />
+            {Array.from({ length: STACK_N }).map((_, i) => <Bar key={i} hue={i * 50 + 45} w="w-24"/>)}
+          </div>
+          <div className="font-mono text-[11px] text-amber-300 mt-2">(N+1) × D</div>
+          <div className="font-mono text-[10px] text-rose-300">[CLS] prepended</div>
+        </div>
+        <div className="text-teal-300 font-mono text-2xl">+ pos</div>
+        <div>
+          <div className="space-y-1">
+            <div className="flex items-center gap-1">
+              <Cls />
+              <div className="w-4 h-2.5 rounded-sm bg-teal-500/60" title="position 0"/>
+            </div>
+            {Array.from({ length: STACK_N }).map((_, i) => (
+              <div key={i} className="flex items-center gap-1">
+                <Bar hue={i * 50 + 45} w="w-24"/>
+                <div className="w-4 h-2.5 rounded-sm" style={{ background: `hsl(${180 + i * 10}, 60%, 50%)`, opacity: 0.7 }} title={`position ${i + 1}`}/>
+              </div>
+            ))}
+          </div>
+          <div className="font-mono text-[11px] text-amber-300 mt-2">tokens + position</div>
+          <div className="font-mono text-[10px] text-teal-300">"who came from where"</div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Stage 5: Encoder × L
+  if (step === 4) {
+    return (
+      <div className="flex items-center justify-center gap-5 min-h-[260px]">
+        <div className="relative">
+          <div className="space-y-1">
+            <Cls/>
+            {Array.from({ length: STACK_N }).map((_, i) => <Bar key={i} hue={i * 50 + 45} w="w-24"/>)}
+          </div>
+          {/* Subtle attention web — a few lines from CLS to other tokens */}
+          <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ overflow: 'visible' }}>
+            {[1, 3, 5, 7].map(i => (
+              <line key={i}
+                x1="50" y1="6"
+                x2="100" y2={6 + i * 14}
+                stroke="rgba(245,158,11,0.25)" strokeWidth="0.7"/>
+            ))}
+          </svg>
+          <div className="font-mono text-[11px] text-slate-400 mt-2">in</div>
+        </div>
+        <div className="text-center">
+          <div className="text-amber-400 font-mono text-xl">→</div>
+          <div className="px-3 py-2 rounded bg-amber-500/15 border border-amber-500/40 font-mono text-[10px] text-amber-200 mt-1 leading-tight">
+            <div>LayerNorm</div>
+            <div>↓</div>
+            <div>Multi-Head SA</div>
+            <div className="text-amber-300/70">+ residual</div>
+            <div>↓</div>
+            <div>LayerNorm</div>
+            <div>↓</div>
+            <div>MLP</div>
+            <div className="text-amber-300/70">+ residual</div>
+          </div>
+          <div className="text-[11px] font-mono text-amber-300 mt-1">× L blocks</div>
+        </div>
+        <div className="text-amber-400 font-mono text-xl">→</div>
+        <div>
+          <div className="space-y-1">
+            <Cls glow/>
+            {Array.from({ length: STACK_N }).map((_, i) => <Bar key={i} hue={i * 50 + 90} w="w-24"/>)}
+          </div>
+          <div className="font-mono text-[11px] text-rose-300 mt-2">contextualized</div>
+          <div className="font-mono text-[10px] text-slate-500">[CLS] now contains<br/>info from every patch</div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Stage 6: CLS head
+  if (step === 5) {
+    return (
+      <div className="flex items-center justify-center gap-6 min-h-[260px]">
+        <div>
+          <div className="space-y-1">
+            <Cls glow/>
+            {Array.from({ length: STACK_N }).map((_, i) => <Bar key={i} hue={i * 50 + 90} w="w-24" dim/>)}
+          </div>
+          <div className="font-mono text-[11px] text-rose-300 mt-2">extract [CLS]</div>
+          <div className="font-mono text-[10px] text-slate-500">patches: ignored</div>
+        </div>
+        <div className="text-rose-300 font-mono text-2xl">→</div>
+        <div className="text-center">
+          <div className="px-4 py-3 rounded bg-amber-500/15 border border-amber-500/40 font-mono text-[11px] text-amber-200">
+            <div>Linear</div>
+            <div className="text-[9px] text-slate-400 mt-0.5">D → C</div>
+          </div>
+          <div className="font-mono text-[10px] text-slate-500 mt-1">classifier head</div>
+        </div>
+        <div className="text-amber-400 font-mono text-2xl">→</div>
+        <div>
+          <div className="space-y-0.5">
+            {[60, 28, 22, 18, 14, 12, 10, 9].map((w, i) => (
+              <div key={i} className="h-2.5 rounded-sm bg-amber-400/70" style={{ width: `${w}px` }}/>
+            ))}
+          </div>
+          <div className="font-mono text-[11px] text-amber-300 mt-2">logits (C)</div>
+          <div className="font-mono text-[10px] text-slate-500">unnormalized</div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Stage 7: Softmax → probabilities
+  const PROBS = [
+    { label: 'tabby cat',     score: 0.74 },
+    { label: 'tiger cat',     score: 0.13 },
+    { label: 'Egyptian cat',  score: 0.06 },
+    { label: 'lynx',          score: 0.04 },
+    { label: 'Persian cat',   score: 0.03 },
+  ];
+  return (
+    <div className="flex flex-col items-center justify-center gap-3 min-h-[260px] py-4">
+      <div className="font-mono text-[11px] text-slate-400">softmax(logits) → class probabilities</div>
+      <div className="space-y-2 w-full max-w-md px-4">
+        {PROBS.map((p, i) => (
+          <div key={i}>
+            <div className="flex justify-between text-[12px] mb-1">
+              <span className="text-slate-200">{p.label}</span>
+              <span className="font-mono text-amber-300">{(p.score * 100).toFixed(0)}%</span>
+            </div>
+            <div className="h-2 bg-slate-800 rounded overflow-hidden">
+              <div className={`h-full ${i === 0 ? 'bg-amber-400' : 'bg-amber-400/40'}`} style={{ width: `${p.score * 100}%` }}/>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="font-mono text-[10px] text-slate-500 mt-1">cross-entropy loss vs. one-hot target finishes one training step</div>
     </div>
   );
 }
