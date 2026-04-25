@@ -3824,11 +3824,14 @@ function LiveDemoTab() {
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState('Slow');
 
-  // Real classifier state — always on. Loads once on mount, then runs
-  // inference automatically on every image change.
-  const classifierRef = useRef(null);
-  const [modelStatus, setModelStatus] = useState('modelLoading'); // modelLoading | inferring | ready | error
-  const [modelMessage, setModelMessage] = useState('Loading transformers.js…');
+  // Real classifier — calls HuggingFace Inference API.
+  // No local model download; each image fires off an HTTP request.
+  // Token is optional but recommended (anonymous calls are heavily rate-limited).
+  const [hfToken, setHfToken] = useState(() => {
+    try { return localStorage.getItem('hfToken') || ''; } catch { return ''; }
+  });
+  const [modelStatus, setModelStatus] = useState('idle'); // idle | inferring | ready | error
+  const [modelMessage, setModelMessage] = useState('');
   const [modelProgress, setModelProgress] = useState(0);
   const [realPreds, setRealPreds] = useState(null);
 
@@ -3882,63 +3885,72 @@ function LiveDemoTab() {
     return () => clearInterval(id);
   }, [playing, speed]);
 
-  const [modelReady, setModelReady] = useState(false);
-
-  // Load the real classifier once on mount.
+  // Persist HF token to localStorage so users don't re-enter it.
   useEffect(() => {
+    try {
+      if (hfToken) localStorage.setItem('hfToken', hfToken);
+      else localStorage.removeItem('hfToken');
+    } catch { /* localStorage may be unavailable */ }
+  }, [hfToken]);
+
+  // Run inference on every image change by calling the HF Inference API.
+  useEffect(() => {
+    if (!imgSrc) return;
     let canceled = false;
+    setModelStatus('inferring');
+    setModelMessage('Calling HuggingFace Inference API…');
+    setRealPreds(null);
+
     (async () => {
       try {
-        setModelMessage('Loading transformers.js…');
-        const mod = await import('@huggingface/transformers');
-        mod.env.allowLocalModels = false;
-        setModelMessage('Downloading ViT-Base/16 (~88 MB · cached after)');
-        const cls = await mod.pipeline(
-          'image-classification',
-          'Xenova/vit-base-patch16-224',
+        // Fetch the image bytes (works for same-origin and uploaded blobs).
+        const imgResp = await fetch(imgSrc);
+        if (!imgResp.ok) throw new Error(`Could not load image (${imgResp.status})`);
+        const blob = await imgResp.blob();
+
+        const apiResp = await fetch(
+          'https://api-inference.huggingface.co/models/google/vit-base-patch16-224',
           {
-            progress_callback: (data) => {
-              if (data.status === 'progress' && !canceled) {
-                setModelProgress(Math.round(data.progress || 0));
-              }
-            },
+            method: 'POST',
+            headers: hfToken ? { 'Authorization': `Bearer ${hfToken}` } : {},
+            body: blob,
           }
         );
         if (canceled) return;
-        classifierRef.current = cls;
-        setModelMessage('');
-        setModelReady(true);
-      } catch (err) {
-        if (!canceled) {
-          setModelStatus('error');
-          setModelMessage(String(err.message || err));
-        }
-      }
-    })();
-    return () => { canceled = true; };
-  }, []);
 
-  // Run inference on every image change once the model is available.
-  useEffect(() => {
-    if (!modelReady || !imgSrc) return;
-    let canceled = false;
-    setModelStatus('inferring');
-    setRealPreds(null);
-    (async () => {
-      try {
-        const out = await classifierRef.current(imgSrc, { topk: 5 });
-        if (!canceled) {
-          // ImageNet labels come as comma-separated synonym lists like
-          // "tabby, tabby cat" or "lynx, catamount". Keep the first
-          // synonym, trimmed, and capitalize it for readability.
-          const cleaned = out.map(p => {
-            const first = String(p.label || '').split(',')[0].trim();
-            const label = first ? first[0].toUpperCase() + first.slice(1) : first;
-            return { ...p, label };
-          });
-          setRealPreds(cleaned);
-          setModelStatus('ready');
+        if (!apiResp.ok) {
+          const txt = await apiResp.text().catch(() => '');
+          if (apiResp.status === 401 || apiResp.status === 403) {
+            setModelStatus('error');
+            setModelMessage('API requires a HuggingFace token — paste one above.');
+            return;
+          }
+          if (apiResp.status === 429) {
+            setModelStatus('error');
+            setModelMessage('Rate limited (anonymous quota). Add a HF token for higher limits.');
+            return;
+          }
+          if (apiResp.status === 503) {
+            setModelStatus('error');
+            setModelMessage('Model is warming up on HF servers (cold start). Try again in ~20 s.');
+            return;
+          }
+          throw new Error(`HF API ${apiResp.status}: ${txt.slice(0, 140)}`);
         }
+
+        const out = await apiResp.json();
+        if (canceled) return;
+        if (!Array.isArray(out)) throw new Error('Unexpected API response shape');
+
+        // Clean up ImageNet synonym lists, keep top 5.
+        const cleaned = out.slice(0, 5).map(p => {
+          const first = String(p.label || '').split(',')[0].trim();
+          const label = first ? first[0].toUpperCase() + first.slice(1) : first;
+          return { ...p, label };
+        });
+        setRealPreds(cleaned);
+        setModelStatus('ready');
+        setModelMessage('');
       } catch (err) {
         if (!canceled) {
           setModelStatus('error');
@@ -3947,13 +3959,13 @@ function LiveDemoTab() {
       }
     })();
     return () => { canceled = true; };
-  }, [modelReady, imgSrc]);
+  }, [imgSrc, hfToken]);
 
   // Status string passed to the predictions panel inside ClassContribution.
-  const ccStatus = !modelReady ? 'modelLoading'
-    : modelStatus === 'inferring' ? 'inferring'
+  const ccStatus = modelStatus === 'inferring' ? 'inferring'
     : modelStatus === 'error' ? 'error'
-    : 'ready';
+    : modelStatus === 'ready' ? 'ready'
+    : 'inferring';
 
   return (
     <div className="space-y-3">
@@ -3962,9 +3974,28 @@ function LiveDemoTab() {
         <h2 className="font-serif text-2xl text-slate-100 tracking-tight">
           Watch the model classify
         </h2>
-        <span className="text-[11px] font-mono text-slate-400">
-          ViT-Base/16 (ImageNet-1K) · runs in your browser · pick an image, hit play
-        </span>
+        <div className="flex items-center gap-2 text-[11px] font-mono">
+          <span className="text-slate-400 hidden sm:inline">
+            ViT-Base/16 (ImageNet-1K) · HuggingFace Inference API
+          </span>
+          <input
+            type="password"
+            value={hfToken}
+            onChange={e => setHfToken(e.target.value.trim())}
+            placeholder="hf_… (optional token)"
+            spellCheck={false}
+            className="w-44 px-2 py-1 rounded bg-slate-900 border border-slate-700 text-amber-200 text-[11px] focus:border-amber-500 focus:outline-none"
+            aria-label="HuggingFace API token"
+          />
+          <a
+            href="https://huggingface.co/settings/tokens"
+            target="_blank"
+            rel="noreferrer"
+            className="text-amber-300 underline underline-offset-2 hover:text-amber-200"
+          >
+            get one
+          </a>
+        </div>
       </div>
 
       {/* Image gallery — compact single row */}
