@@ -588,27 +588,37 @@ function PatchTab() {
           </Card>
 
           <Card className="p-5">
-            <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-3">
-              Flattened patch sequence — N = {numPatches}
+            <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-4">
+              What happens to one patch
             </div>
-            <div
-              className="grid gap-1 p-2 bg-slate-950/40 rounded border border-slate-800 max-h-[280px] overflow-auto"
-              style={{ gridTemplateColumns: `repeat(${Math.min(grid, 16)}, minmax(0,1fr))` }}
-            >
-              {patchSequence.map(i => (
-                <PatchThumb
-                  key={i}
-                  index={i}
-                  patchSize={patchSize}
-                  grid={grid}
-                  highlighted={i === hoveredPatch}
-                  onHover={() => setHoveredPatch(i)}
-                />
-              ))}
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex flex-col items-center gap-1">
+                <div className="w-16 h-16 rounded ring-1 ring-amber-500/40 overflow-hidden">
+                  <PatchThumb index={hoveredPatch ?? 0} patchSize={patchSize} grid={grid} />
+                </div>
+                <div className="text-[10px] font-mono text-slate-500">P × P × 3</div>
+              </div>
+              <div className="text-amber-400/70 font-mono">→</div>
+              <div className="flex flex-col items-center gap-1">
+                <div className="px-3 py-1.5 rounded bg-slate-800/60 border border-slate-700 text-[11px] font-mono text-slate-300">flatten</div>
+                <div className="text-[10px] font-mono text-slate-500">vector ∈ ℝ^(P²·3)</div>
+              </div>
+              <div className="text-amber-400/70 font-mono">→</div>
+              <div className="flex flex-col items-center gap-1">
+                <div className="px-3 py-1.5 rounded bg-amber-500/15 border border-amber-500/40 text-[11px] font-mono text-amber-200">× E (linear)</div>
+                <div className="text-[10px] font-mono text-slate-500">learned matrix</div>
+              </div>
+              <div className="text-amber-400/70 font-mono">→</div>
+              <div className="flex flex-col items-center gap-1">
+                <div className="h-12 w-2 bg-gradient-to-b from-amber-400 via-rose-400 to-teal-400 rounded-sm shadow shadow-amber-500/30" title="D-dim patch embedding" />
+                <div className="text-[10px] font-mono text-slate-500">embedding ∈ ℝ^D</div>
+              </div>
             </div>
-            <div className="text-[11px] text-slate-500 mt-3 italic">
-              Hover the image or any thumbnail — the grid loses no information about
-              order on its own. Position embeddings (next tab) will tell the model who came from where.
+            <div className="text-[12px] text-slate-400 mt-4 leading-relaxed">
+              Every patch goes through the <em>same</em> linear projection — the matrix <Eq>E</Eq> is
+              shared across all N patches and is what the model learns. After this step we have N
+              embeddings of dimension D, ready to feed to the transformer. Hover a patch on the image
+              to see which one is being projected.
             </div>
           </Card>
         </div>
@@ -654,9 +664,8 @@ function PatchThumb({ index, patchSize, grid, highlighted, onHover }) {
 
 function PositionTab() {
   const [posOn, setPosOn] = useState(true);
-  const [showCls, setShowCls] = useState(true);
   const [shuffle, setShuffle] = useState(false);
-  const [embDim] = useState(64);
+  const embDim = 64;
   const N = 16;
 
   // Learnable position embeddings approximated by a 2D sinusoidal pattern
@@ -705,71 +714,146 @@ function PositionTab() {
   }, [shuffle]);
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-10">
       <Section icon={Hash} kicker="03 — Spatial order, restored" title="Position embeddings & [CLS] token">
-        <p className="max-w-3xl mb-3">
-          Self-attention is permutation-equivariant: scramble the input tokens and the output
-          scrambles the same way. That means the raw patch sequence carries no spatial information.
-          ViT fixes this by adding a learned <Eq>E_pos ∈ ℝ^(N+1)×D</Eq> to each token before the
-          first encoder block.
+        <p className="max-w-3xl mb-3 text-slate-300">
+          The last tab turned an image into N patch vectors. Two things are still missing before we can
+          run a real ViT classifier:
         </p>
-        <p className="max-w-3xl">
-          A learnable <span className="text-rose-300">[CLS]</span> token is prepended to the sequence;
-          its final-layer representation is what the classification head reads. Below: a stylized
-          2D-sinusoidal position scheme — tokens close in space have high cosine similarity in their
-          position embeddings.
+        <ol className="list-decimal pl-6 text-slate-300 space-y-1.5 mb-3 max-w-3xl">
+          <li>The transformer has <em>no idea where each patch came from</em> — top-left or bottom-right look identical to it.</li>
+          <li>The transformer outputs <em>N vectors</em>, one per patch — but classification needs <em>one</em> answer per image.</li>
+        </ol>
+        <p className="max-w-3xl text-slate-400 text-sm">
+          ViT fixes the first with <span className="text-amber-300">position embeddings</span> and the
+          second with a special <span className="text-rose-300">[CLS]</span> token. We'll handle them in
+          that order.
         </p>
       </Section>
 
-      <div className="grid lg:grid-cols-3 gap-5">
+      {/* Part 1 — position embeddings */}
+      <div>
+        <div className="flex items-center gap-3 mb-3">
+          <div className="w-7 h-7 rounded-full bg-amber-500/20 border border-amber-500/50 flex items-center justify-center font-mono text-amber-300 text-sm">1</div>
+          <h3 className="font-serif text-2xl text-slate-100 tracking-tight">Position embeddings</h3>
+        </div>
+        <p className="text-slate-300 mb-5 max-w-3xl leading-relaxed">
+          Self-attention is <em>permutation-equivariant</em>: if you shuffle the input tokens, the output
+          shuffles the same way — but the actual content the model computes is the same. So the raw patch
+          sequence carries <strong>no spatial information</strong>. The fix: add a learned vector
+          {' '}<Eq>E_pos[i]</Eq> to each token to mark "this came from position i".
+        </p>
+
+        <div className="grid lg:grid-cols-2 gap-5">
+          <Card className="p-5">
+            <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-3">
+              Try it
+            </div>
+            <div className="flex items-center gap-1 mb-4 flex-wrap">
+              {order.map(i => (
+                <div
+                  key={i}
+                  className="w-10 h-10 rounded border flex flex-col items-center justify-center font-mono text-amber-200 transition-all"
+                  style={{
+                    background: posOn ? 'rgba(245,158,11,0.10)' : 'rgba(100,116,139,0.10)',
+                    borderColor: posOn ? 'rgba(245,158,11,0.40)' : 'rgba(100,116,139,0.40)',
+                  }}
+                >
+                  <span className="text-xs leading-none">{i}</span>
+                  {posOn && <span className="text-[8px] text-teal-300 leading-none mt-0.5">@{i}</span>}
+                </div>
+              ))}
+            </div>
+            <div className="space-y-2">
+              <Toggle label="Shuffle patches" value={shuffle} onChange={setShuffle} />
+              <Toggle label="Add position embeddings" value={posOn} onChange={setPosOn} />
+            </div>
+            <div className="mt-4 text-[12px] leading-relaxed">
+              {!posOn && shuffle && <span className="text-rose-300">No position info + shuffled → the model treats this as the same input as the original. Spatial structure is lost.</span>}
+              {!posOn && !shuffle && <span className="text-slate-400">No position info. It happens to look "right" because we didn't shuffle, but the model isn't actually using the order.</span>}
+              {posOn && shuffle && <span className="text-amber-200">Shuffled, but each patch carries its position tag (the small <span className="text-teal-300">@i</span>). The model can recover the original spatial structure.</span>}
+              {posOn && !shuffle && <span className="text-teal-300">Each token now carries both content (patch) <em>and</em> location (the <span className="text-teal-300">@i</span> tag).</span>}
+            </div>
+          </Card>
+
+          <Card className="p-5">
+            <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-3">
+              Position similarity (4×4 grid)
+            </div>
+            <SimHeatmap data={simMatrix} N={N} />
+            <div className="mt-3 text-[12px] text-slate-400 leading-relaxed">
+              Each cell shows how similar the position embedding for patch <em>i</em> is to patch <em>j</em>.
+              Bright cells cluster around the diagonal — <strong>spatially-nearby patches have similar
+              position embeddings</strong>. That's how attention learns the concept of "near" vs "far".
+            </div>
+          </Card>
+        </div>
+      </div>
+
+      {/* Part 2 — [CLS] token */}
+      <div>
+        <div className="flex items-center gap-3 mb-3">
+          <div className="w-7 h-7 rounded-full bg-rose-500/20 border border-rose-500/50 flex items-center justify-center font-mono text-rose-300 text-sm">2</div>
+          <h3 className="font-serif text-2xl text-slate-100 tracking-tight">The [CLS] token</h3>
+        </div>
+        <p className="text-slate-300 mb-5 max-w-3xl leading-relaxed">
+          The transformer eats N tokens and produces N output vectors. But classification needs one answer
+          per image. ViT prepends a single learnable <Eq>[CLS]</Eq> embedding (a learned parameter, not
+          tied to any patch) to the sequence. Through self-attention, [CLS] gathers information from every
+          patch token in every layer. After the final block, its output vector goes straight into a linear
+          classifier — and the patch outputs are ignored for classification.
+        </p>
+
         <Card className="p-5">
           <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-3">
-            Token sequence (4×4 = 16 patches)
+            Sequence flow with [CLS]
           </div>
-          <div className="flex items-center gap-1 mb-4 flex-wrap">
-            {showCls && (
-              <div className="w-9 h-9 rounded bg-rose-500/20 border-2 border-rose-400 flex items-center justify-center font-mono text-[10px] text-rose-300">
-                CLS
-              </div>
-            )}
-            {order.map(i => (
-              <div key={i} className="w-9 h-9 rounded bg-amber-500/10 border border-amber-500/30 flex items-center justify-center font-mono text-xs text-amber-200">
-                {i}
-              </div>
+
+          <div className="flex items-center gap-2 mb-2 flex-wrap">
+            <div className="text-[11px] font-mono text-slate-500 w-12 shrink-0">in:</div>
+            <div className="w-10 h-10 rounded bg-rose-500/25 border-2 border-rose-400 flex items-center justify-center font-mono text-[10px] text-rose-200 font-bold">CLS</div>
+            <span className="text-slate-600">|</span>
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="w-10 h-10 rounded bg-amber-500/10 border border-amber-500/40 flex items-center justify-center font-mono text-xs text-amber-200">P{i}</div>
             ))}
+            <span className="text-slate-500 text-sm">… (N total)</span>
           </div>
-          <div className="space-y-2">
-            <Toggle label="Add position embeddings" value={posOn} onChange={setPosOn} />
-            <Toggle label="Prepend [CLS] token" value={showCls} onChange={setShowCls} />
-            <Toggle label="Randomly shuffle patches" value={shuffle} onChange={setShuffle} />
-          </div>
-          <div className="mt-4 text-[12px] text-slate-400 leading-relaxed">
-            {!posOn && <span className="text-rose-300">Without position embeddings, shuffling has zero effect on the model.</span>}
-            {posOn && shuffle && <span className="text-amber-300">With position embeddings, the model can detect that the order is wrong — each patch carries its identity.</span>}
-            {posOn && !shuffle && <span className="text-teal-300">Each token now carries both content (patch) and location (position) information.</span>}
-          </div>
-        </Card>
 
-        <Card className="p-5">
-          <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-3">
-            Position embedding matrix · 16 × 64
+          <div className="flex items-center gap-3 my-3 ml-12">
+            <div className="text-amber-400/70 font-mono text-lg">↓</div>
+            <div className="px-3 py-1.5 rounded bg-slate-800/60 border border-slate-700 text-[11px] font-mono text-slate-300">
+              L stacked Transformer blocks
+            </div>
+            <div className="text-slate-500 text-[11px]">[CLS] gathers info from all patches at every layer</div>
           </div>
-          <PosHeatmap data={posMatrix} rows={N} cols={embDim} />
-          <div className="mt-3 text-[11px] text-slate-500 leading-relaxed">
-            Each row is the position embedding of one patch (top-left to bottom-right).
-            Brighter = larger value. The diagonal banding reflects the 2D sin/cos basis.
-          </div>
-        </Card>
 
-        <Card className="p-5">
-          <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-3">
-            Cosine similarity between positions
+          <div className="flex items-center gap-2 mb-3 flex-wrap">
+            <div className="text-[11px] font-mono text-slate-500 w-12 shrink-0">out:</div>
+            <div className="w-10 h-10 rounded bg-rose-500/40 border-2 border-rose-400 flex items-center justify-center font-mono text-[10px] text-rose-100 font-bold shadow-lg shadow-rose-500/30 ring-2 ring-rose-400/40">CLS</div>
+            <span className="text-slate-600">|</span>
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="w-10 h-10 rounded bg-slate-800/40 border border-slate-700 flex items-center justify-center font-mono text-xs text-slate-500" title="Patch outputs are ignored for classification">P{i}</div>
+            ))}
+            <span className="text-slate-600 text-sm">… (ignored for classification)</span>
           </div>
-          <SimHeatmap data={simMatrix} N={N} />
-          <div className="mt-3 text-[11px] text-slate-500 leading-relaxed">
-            Cell (i, j) shows how similar position i's embedding is to position j's. Spatial neighbors
-            cluster together — this is what gives self-attention its sense of "near" and "far".
+
+          <div className="flex items-center gap-3 mt-4 ml-12">
+            <div className="text-rose-300 font-mono text-lg">↓</div>
+            <div className="px-3 py-1.5 rounded bg-rose-500/15 border border-rose-500/40 text-[12px] text-rose-100">
+              Linear classifier
+            </div>
+            <div className="text-amber-300 font-mono text-lg">→</div>
+            <div className="px-3 py-1.5 rounded bg-amber-500/15 border border-amber-500/40 text-[12px] text-amber-100">
+              Class probabilities
+            </div>
           </div>
+
+          <p className="text-[12px] text-slate-400 italic mt-5 max-w-3xl leading-relaxed">
+            Why is [CLS] enough? Because self-attention lets it pull information from every patch.
+            By the final layer, [CLS] is a learned summary of the whole image — exactly what the classifier needs.
+            For tasks like segmentation, the patch outputs aren't ignored; for classification specifically,
+            only [CLS] matters.
+          </p>
         </Card>
       </div>
     </div>
@@ -1356,11 +1440,15 @@ function MultiHeadTab() {
   return (
     <div className="space-y-8">
       <Section icon={Network} kicker="05 — Many views, simultaneously" title="Multi-head attention">
-        <p className="max-w-3xl mb-3">
-          A single attention head must compromise across many possible relationships — texture, color,
-          spatial proximity, semantic similarity. Multi-head attention runs <Eq>h</Eq> independent
-          attention computations in parallel, each on a smaller subspace of dimension <Eq>d_k = D/h</Eq>,
-          and concatenates the results.
+        <p className="max-w-3xl mb-3 text-slate-300">
+          The previous tab gave us <em>one</em> attention pattern — one way of saying "patches that look
+          alike attend to each other". But what counts as "alike"? Color? Texture? Position? A single
+          head has to compromise across all of these.
+        </p>
+        <p className="max-w-3xl mb-3 text-slate-300">
+          Multi-head attention runs <Eq>h</Eq> independent attention computations in parallel, each on a
+          smaller subspace of dimension <Eq>d_k = D/h</Eq>, then concatenates them. Each head can
+          specialize: one might track color similarity, another spatial proximity, another shape.
         </p>
         <div className="font-mono text-[13px] text-amber-200 bg-slate-950/60 border border-amber-500/20 rounded-lg p-4 max-w-3xl">
           MultiHead(Q, K, V) = Concat(head₁, …, head_h)·W_O,&nbsp;&nbsp;
@@ -1571,10 +1659,12 @@ function PipelineTab() {
   return (
     <div className="space-y-8">
       <Section icon={Workflow} kicker="06 — End to end" title="ViT forward pass">
-        <p className="max-w-3xl mb-4">
-          The full pipeline composes the pieces from the last few tabs. Step through each stage to see the
-          tensor shapes evolve. The encoder is a stack of <Eq>L</Eq> identical blocks — each one applies
-          multi-head self-attention, then an MLP, both wrapped in residual connections and pre-norm LayerNorm.
+        <p className="max-w-3xl mb-4 text-slate-300">
+          We've now built every piece individually: patch embedding, position embeddings, [CLS], and
+          multi-head self-attention. Time to assemble. Step through each stage below to see how the
+          tensor shapes evolve from <Eq>H × W × 3</Eq> pixels to <Eq>C</Eq> class logits. The encoder
+          is just a stack of <Eq>L</Eq> identical blocks — each block does multi-head self-attention,
+          then an MLP, both wrapped in residual connections and pre-norm LayerNorm.
         </p>
         <div className="flex items-center gap-3">
           <button
@@ -1789,14 +1879,16 @@ function WindowTab() {
   return (
     <div className="space-y-8">
       <Section icon={Box} kicker="07 — Locality is back" title="Window-based self-attention">
-        <p className="max-w-3xl mb-3">
-          Global self-attention costs <Eq>O(N²)</Eq> in the number of tokens. For an 800×800 image with
-          patch size 4, that's 40,000 tokens — and 1.6 billion attention pairs per layer. Untenable.
+        <p className="max-w-3xl mb-3 text-slate-300">
+          ViT's quadratic attention cost is fine at 224 × 224, but it explodes for high-resolution work
+          (segmentation, detection). For an 800 × 800 image with patch size 4, that's 40,000 tokens —
+          and 1.6 billion attention pairs <em>per layer</em>. Untenable.
         </p>
-        <p className="max-w-3xl">
-          Swin's first move: partition the patches into non-overlapping windows of <Eq>M × M</Eq> tokens,
-          and let attention happen <span className="text-teal-300">only inside each window</span>. Cost
-          per layer drops to <Eq>O(M² · N)</Eq> — linear in the number of patches.
+        <p className="max-w-3xl text-slate-300">
+          Swin's first idea: stop attending globally. Partition the patches into non-overlapping windows
+          of <Eq>M × M</Eq> tokens, and let attention happen <span className="text-teal-300">only inside
+          each window</span>. Cost per layer drops to <Eq>O(M² · N)</Eq> — linear in the number of patches.
+          The next tab fixes the obvious downside: now patches across window boundaries can't talk.
         </p>
       </Section>
 
@@ -1933,14 +2025,21 @@ function ShiftedTab() {
   return (
     <div className="space-y-8">
       <Section icon={Move} kicker="08 — Cross-window connections" title="Shifted window attention">
-        <p className="max-w-3xl mb-3">
-          Swin alternates two layers. Layer <Eq>l</Eq> uses regular window partitioning <span className="font-mono text-amber-300">W-MSA</span>.
-          Layer <Eq>l+1</Eq> shifts the window grid by <Eq>(⌊M/2⌋, ⌊M/2⌋)</Eq> pixels — call this <span className="font-mono text-amber-300">SW-MSA</span>.
+        <p className="max-w-3xl mb-3 text-slate-300">
+          The previous tab introduced a problem: with strict windows, two patches that sit on either
+          side of a window boundary <em>never</em> attend to each other, no matter how many layers we
+          stack. That kills the global reasoning we got from ViT for free.
         </p>
-        <p className="max-w-3xl">
-          Patches that were neighbors-across-a-wall in layer <Eq>l</Eq> now share a window in layer <Eq>l+1</Eq>.
-          After two layers, every patch has effectively communicated with everything in a <Eq>2M × 2M</Eq> region.
-          Stack more, and the receptive field keeps growing — at linear cost.
+        <p className="max-w-3xl mb-3 text-slate-300">
+          Swin's fix: alternate two kinds of layers. Layer <Eq>l</Eq> uses regular window partitioning
+          (<span className="font-mono text-amber-300">W-MSA</span>). Layer <Eq>l+1</Eq> shifts the window
+          grid by <Eq>(⌊M/2⌋, ⌊M/2⌋)</Eq> pixels (<span className="font-mono text-amber-300">SW-MSA</span>).
+          Patches that were neighbors-across-a-wall in layer <Eq>l</Eq> now share a window in layer
+          <Eq>l+1</Eq>.
+        </p>
+        <p className="max-w-3xl text-slate-300">
+          After two layers, every patch has effectively communicated with everything in a
+          <Eq>2M × 2M</Eq> region. Stack more, and the receptive field keeps growing — still at linear cost.
         </p>
       </Section>
 
@@ -2118,15 +2217,17 @@ function HierarchyTab() {
   return (
     <div className="space-y-8">
       <Section icon={GitBranch} kicker="09 — Pyramid features" title="Patch merging & hierarchical stages">
-        <p className="max-w-3xl mb-3">
-          ViT operates at a single resolution — usually <Eq>14×14</Eq> — for the whole network.
-          That's enough for image classification, but disastrous for dense prediction tasks like
-          detection and segmentation, which need fine-grained features.
+        <p className="max-w-3xl mb-3 text-slate-300">
+          We've made attention efficient (windows) and global (shifted windows). One thing is still
+          missing: ViT runs at a <em>single resolution</em> the whole way through. Classification gets
+          away with this, but detection and segmentation need features at multiple scales — like a
+          ConvNet's pyramid.
         </p>
-        <p className="max-w-3xl">
-          Swin builds a feature pyramid like a ConvNet. Between stages, a <span className="text-teal-300">patch
-          merging</span> layer concatenates each <Eq>2×2</Eq> neighborhood of patches and projects
-          back to <Eq>2C</Eq> dimensions. Resolution halves; channels double; receptive field doubles.
+        <p className="max-w-3xl text-slate-300">
+          Swin's last ingredient: a <span className="text-teal-300">patch-merging</span> layer between
+          stages. Take every <Eq>2×2</Eq> group of patches, concatenate their channels (<Eq>4C</Eq>),
+          then linearly project back to <Eq>2C</Eq>. Resolution halves; channels double; receptive field
+          doubles. After four stages we have a CNN-style feature pyramid, but built from attention.
         </p>
       </Section>
 
@@ -2375,10 +2476,15 @@ function CompareTab() {
   return (
     <div className="space-y-8">
       <Section icon={Microscope} kicker="10 — When to choose which" title="Side-by-side comparison">
-        <p className="max-w-3xl">
-          Both models work — they just optimize different things. ViT is conceptually purer and scales
-          beautifully on huge datasets. Swin is more practical for real-world dense-prediction tasks
-          and trains well at smaller scales. Knowing the trade-offs helps you pick the right backbone.
+        <p className="max-w-3xl mb-3 text-slate-300">
+          We started with ViT (global, simple, expensive) and built up to Swin (local + shifted +
+          hierarchical, cheaper, more practical). Both models work — they just optimize different things.
+        </p>
+        <p className="max-w-3xl text-slate-300">
+          ViT is conceptually purer and scales beautifully when you have huge datasets and modest
+          resolutions. Swin is the better default for real-world dense-prediction tasks (detection,
+          segmentation) and trains well at smaller scales. The cost calculator below makes the
+          quadratic-vs-linear gap concrete.
         </p>
       </Section>
 
