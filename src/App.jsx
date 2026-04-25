@@ -3224,7 +3224,7 @@ function MiniArch({ progress, topPred }) {
 
   const TokenBar = ({ hue, dim = false, cls = false, glow = false }) => (
     <div
-      className={`w-12 h-2 rounded-sm transition-all
+      className={`w-9 h-1.5 rounded-sm transition-all
         ${cls ? 'ring-1 ring-rose-300' : ''}
         ${glow ? 'shadow shadow-rose-500/50' : ''}`}
       style={{
@@ -3238,154 +3238,123 @@ function MiniArch({ progress, topPred }) {
     />
   );
   const Arr = ({ on }) => (
-    <div className={`text-xl font-mono shrink-0 ${on ? 'text-amber-400' : 'text-slate-700'}`}>→</div>
+    <div className={`text-base font-mono shrink-0 ${on ? 'text-amber-400' : 'text-slate-700'}`}>→</div>
   );
   const Label = ({ children, color = 'slate' }) => (
-    <div className={`text-[10px] font-mono uppercase tracking-wider mb-1.5 text-${color}-400/80 text-center`}>
+    <div className={`text-[9px] font-mono uppercase tracking-wide mb-1 text-${color}-400/80 text-center whitespace-nowrap`}>
       {children}
     </div>
   );
 
-  // Encoder block: a bipartite graph of input tokens → output tokens
-  // with all-to-all attention edges. SVG so it scales cleanly.
+  // Compact encoder block: 5-node bipartite graph in a small SVG.
   const Encoder = ({ active }) => {
-    const NODES = 6;
-    const W = 110, H = 84;
-    const inX = 14, outX = W - 14;
-    const ySpacing = (H - 16) / (NODES - 1);
-    const ys = Array.from({ length: NODES }, (_, i) => 8 + i * ySpacing);
+    const NODES = 5;
+    const W = 64, H = 56;
+    const inX = 8, outX = W - 8;
+    const ySpacing = (H - 12) / (NODES - 1);
+    const ys = Array.from({ length: NODES }, (_, i) => 6 + i * ySpacing);
     return (
       <div
-        className={`relative rounded-lg border px-2 py-2 transition-all
+        className={`rounded-md border px-1.5 py-1 transition-all
           ${active
             ? 'bg-amber-500/10 border-amber-500/50'
             : 'bg-slate-800/30 border-slate-700/60'}`}
       >
         <svg width={W} height={H} className="block">
-          {/* Edges: every input → every output (self-attention) */}
           {active && ys.flatMap((y1, i) =>
             ys.map((y2, j) => (
               <line
                 key={`e-${i}-${j}`}
                 x1={inX} y1={y1} x2={outX} y2={y2}
-                stroke="rgba(245,158,11,0.18)"
-                strokeWidth="0.5"
+                stroke="rgba(245,158,11,0.20)"
+                strokeWidth="0.4"
               />
             ))
           )}
-          {/* Input nodes */}
           {ys.map((y, i) => (
-            <circle
-              key={`l-${i}`}
-              cx={inX} cy={y} r={3}
-              fill={active ? '#fbbf24' : '#475569'}
-              opacity={active ? 0.9 : 0.6}
-            />
+            <circle key={`l-${i}`} cx={inX} cy={y} r={2.2}
+              fill={active ? '#fbbf24' : '#475569'} opacity={active ? 0.9 : 0.6}/>
           ))}
-          {/* Output nodes */}
           {ys.map((y, i) => (
-            <circle
-              key={`r-${i}`}
-              cx={outX} cy={y} r={3}
-              fill={active ? '#fbbf24' : '#475569'}
-              opacity={active ? 0.9 : 0.6}
-            />
+            <circle key={`r-${i}`} cx={outX} cy={y} r={2.2}
+              fill={active ? '#fbbf24' : '#475569'} opacity={active ? 0.9 : 0.6}/>
           ))}
         </svg>
-        <div className="absolute -bottom-4 left-0 right-0 text-center text-[9px] font-mono text-amber-300/70">
-          × L blocks
-        </div>
+        <div className={`text-[8px] font-mono text-center leading-none ${active ? 'text-amber-300/70' : 'text-slate-600'}`}>× L</div>
       </div>
     );
   };
 
-  // Linear classifier: small W matrix with arrows in/out
   const Linear = ({ active }) => (
     <div
-      className={`rounded-lg border px-2 py-2 transition-all flex flex-col items-center
+      className={`rounded-md border px-1.5 py-1 transition-all flex flex-col items-center
         ${active
           ? 'bg-amber-500/10 border-amber-500/50'
           : 'bg-slate-800/30 border-slate-700/60'}`}
     >
       <div className="grid grid-cols-4 gap-px">
         {Array.from({ length: 12 }).map((_, i) => (
-          <div
-            key={i}
-            className="w-2 h-2 rounded-[1px]"
+          <div key={i} className="w-1.5 h-1.5 rounded-[1px]"
             style={{
-              background: active
-                ? `hsl(${(i * 25) % 360}, 60%, 55%)`
-                : 'rgba(100,116,139,0.3)',
+              background: active ? `hsl(${(i * 25) % 360}, 60%, 55%)` : 'rgba(100,116,139,0.3)',
               opacity: active ? 0.85 : 0.4,
-            }}
-          />
+            }}/>
         ))}
       </div>
-      <div className={`text-[9px] font-mono mt-1.5 ${active ? 'text-amber-200' : 'text-slate-500'}`}>
-        W ∈ ℝ^(D × C)
+      <div className={`text-[8px] font-mono mt-1 leading-none ${active ? 'text-amber-200' : 'text-slate-500'}`}>
+        W
       </div>
     </div>
   );
 
   return (
-    <div className="flex items-end justify-between gap-2 flex-wrap">
-      {/* Patches → tokens */}
-      <div className="flex flex-col items-center pb-3">
+    <div className="flex items-end justify-between gap-1.5">
+      <div className="flex flex-col items-center">
         <Label color={stage >= 0 ? 'amber' : 'slate'}>patches</Label>
-        <div className="space-y-1">
-          {[0, 1, 2, 3, 4, 5].map(i => (
-            <TokenBar key={i} hue={i * 50} dim={stage < 0}/>
-          ))}
+        <div className="space-y-0.5">
+          {[0, 1, 2, 3, 4].map(i => <TokenBar key={i} hue={i * 60}/>)}
         </div>
-        <div className="text-[9px] font-mono text-slate-500 mt-1.5">N × D</div>
       </div>
 
       <Arr on={stage >= 1}/>
 
-      {/* Encoder block */}
-      <div className="flex flex-col items-center pb-3">
-        <Label color={stage >= 1 ? 'amber' : 'slate'}>self-attention</Label>
+      <div className="flex flex-col items-center">
+        <Label color={stage >= 1 ? 'amber' : 'slate'}>self-attn</Label>
         <Encoder active={stage >= 1}/>
       </div>
 
       <Arr on={stage >= 2}/>
 
-      {/* Output tokens with CLS extracted */}
-      <div className="flex flex-col items-center pb-3">
-        <Label color={stage >= 2 ? 'rose' : 'slate'}>extract [CLS]</Label>
-        <div className="space-y-1">
+      <div className="flex flex-col items-center">
+        <Label color={stage >= 2 ? 'rose' : 'slate'}>[CLS]</Label>
+        <div className="space-y-0.5">
           <TokenBar cls glow={stage >= 2} dim={stage < 2}/>
-          {[0, 1, 2, 3, 4].map(i => (
-            <TokenBar key={i} hue={i * 50 + 30} dim/>
-          ))}
+          {[0, 1, 2, 3].map(i => <TokenBar key={i} hue={0} dim/>)}
         </div>
-        <div className="text-[9px] font-mono text-slate-500 mt-1.5">1 × D</div>
       </div>
 
       <Arr on={stage >= 3}/>
 
-      {/* Linear classifier */}
-      <div className="flex flex-col items-center pb-3">
+      <div className="flex flex-col items-center">
         <Label color={stage >= 3 ? 'amber' : 'slate'}>classifier</Label>
         <Linear active={stage >= 3}/>
       </div>
 
       <Arr on={stage >= 4}/>
 
-      {/* Top prediction */}
-      <div className="flex flex-col items-center pb-3">
+      <div className="flex flex-col items-center">
         <Label color={stage >= 4 ? 'teal' : 'slate'}>top class</Label>
         <div
-          className={`px-3 py-2 rounded-lg border text-center min-w-[110px] transition-all
+          className={`px-2 py-1 rounded-md border text-center min-w-[80px] transition-all
             ${stage >= 4
-              ? 'bg-teal-500/15 border-teal-500/50 text-teal-100 shadow-md'
+              ? 'bg-teal-500/15 border-teal-500/50 text-teal-100'
               : 'bg-slate-800/30 border-slate-700/60 text-slate-500'}`}
         >
-          <div className="text-[12px] font-mono leading-tight truncate">
+          <div className="text-[11px] font-mono leading-tight truncate">
             {stage >= 4 && topPred ? topPred.label : '—'}
           </div>
           {stage >= 4 && topPred && (
-            <div className="text-[10px] font-mono opacity-80 mt-0.5">
+            <div className="text-[9px] font-mono opacity-80 leading-none">
               {(topPred.score * 100).toFixed(0)}%
             </div>
           )}
@@ -3637,57 +3606,50 @@ function LiveDemoTab() {
         </Card>
       </div>
 
-      {/* Class-attention heatmaps (ViT + Swin) — bridge from "the matrix"
-          to "and that's why the model predicts X". */}
-      <Card className="p-4">
-        <div className="flex items-baseline justify-between gap-3 mb-3 flex-wrap">
-          <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/80">
-            What the model is looking at
-          </div>
-          <span className="text-[11px] font-mono text-slate-500">
-            heatmap = column-sums of the attention matrix (proxy for [CLS] attention)
-          </span>
-        </div>
-        <div className="grid sm:grid-cols-2 gap-4">
-          <div className="text-center">
-            <div className="flex items-center justify-center gap-2 mb-2">
-              <Tag color="amber">ViT</Tag>
-              <span className="text-[11px] font-mono text-slate-400">global attention</span>
+      {/* Heatmap + architecture flow side-by-side, both compact, so they
+          fit alongside the controls and predictions on one screen. */}
+      <div className="grid lg:grid-cols-2 gap-4">
+        <Card className="p-3">
+          <div className="flex items-baseline justify-between gap-2 mb-2">
+            <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/80">
+              What the model is looking at
             </div>
-            <canvas ref={heatVitRef} className="w-full max-w-[260px] mx-auto rounded bg-slate-950 aspect-square block" />
-            <p className="text-[11px] text-slate-400 mt-2 max-w-[260px] mx-auto leading-relaxed">
-              Smooth peaks anywhere on the image — every patch attends globally.
-            </p>
+            <span className="text-[10px] font-mono text-slate-500">col-sum of attn ≈ [CLS] view</span>
           </div>
-          <div className="text-center">
-            <div className="flex items-center justify-center gap-2 mb-2">
-              <Tag color="teal">Swin</Tag>
-              <span className="text-[11px] font-mono text-slate-400">windowed attention</span>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <div className="flex items-center gap-1.5 mb-1">
+                <Tag color="amber">ViT</Tag>
+                <span className="text-[10px] font-mono text-slate-400">global</span>
+              </div>
+              <canvas ref={heatVitRef} className="w-full rounded bg-slate-950 aspect-square block" />
             </div>
-            <canvas ref={heatSwinRef} className="w-full max-w-[260px] mx-auto rounded bg-slate-950 aspect-square block" />
-            <p className="text-[11px] text-slate-400 mt-2 max-w-[260px] mx-auto leading-relaxed">
-              Blockier — attention can't cross window boundaries, so peaks are bounded by 4×4 patch tiles.
-            </p>
+            <div>
+              <div className="flex items-center gap-1.5 mb-1">
+                <Tag color="teal">Swin</Tag>
+                <span className="text-[10px] font-mono text-slate-400">windowed</span>
+              </div>
+              <canvas ref={heatSwinRef} className="w-full rounded bg-slate-950 aspect-square block" />
+            </div>
           </div>
-        </div>
-        <p className="text-[12px] text-slate-400 mt-3 leading-relaxed max-w-3xl mx-auto text-center">
-          Bright = patches that receive the most attention from all queries. That's where the model's
-          internal representation gets its content from, and therefore what drives the prediction.
-        </p>
-      </Card>
+          <p className="text-[11px] text-slate-400 mt-2 leading-snug">
+            Bright = patches the [CLS] token pulls most info from. ViT's view is smooth;
+            Swin's is bounded by its 4×4 windows.
+          </p>
+        </Card>
 
-      <Card className="p-4">
-        <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/80 mb-3">
-          How the matrix becomes a prediction
-        </div>
-        <MiniArch progress={progress} topPred={(mode === 'real' ? realPreds : (customSrc ? SIM_FALLBACK : (SIM_PREDS[galleryId] || SIM_FALLBACK)))?.[0]} />
-        <p className="text-[12px] text-slate-400 mt-5 leading-relaxed max-w-3xl">
-          The attention matrix lives <em>inside</em> the self-attention block. The bipartite graph above
-          is one such block: every input token (left) connects to every output token (right) via attention
-          weights. Stack <Eq>L</Eq> of these (≈12 for ViT-Base) — by the last layer the [CLS] vector has
-          summarized the whole image. A single linear layer turns it into class scores.
-        </p>
-      </Card>
+        <Card className="p-3">
+          <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/80 mb-2">
+            How the matrix becomes a prediction
+          </div>
+          <MiniArch progress={progress} topPred={(mode === 'real' ? realPreds : (customSrc ? SIM_FALLBACK : (SIM_PREDS[galleryId] || SIM_FALLBACK)))?.[0]} />
+          <p className="text-[11px] text-slate-400 mt-3 leading-snug">
+            The attention matrix lives <em>inside</em> the encoder block (left graph above).
+            Stack <Eq>L ≈ 12</Eq> of them, extract <span className="text-rose-300">[CLS]</span>,
+            multiply by a learned <Eq>W</Eq> → class scores.
+          </p>
+        </Card>
+      </div>
 
       <Card className="p-5">
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
