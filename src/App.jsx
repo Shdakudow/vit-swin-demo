@@ -773,6 +773,127 @@ function SimHeatmap({ data, N }) {
 }
 
 /* =========================================================
+   Numerical walk-through helpers (Self-Attention & Multi-Head)
+   Tiny, deterministic example: 3 patches with 4 features each.
+   The first and third patches share a "red-ish" pattern, the
+   second is "blue-ish" — so attention should pick out 0↔2.
+   ========================================================= */
+
+const X_TOY = {
+  data: new Float32Array([
+    1.0, 0.5, 0.0, 0.0,
+    0.0, 0.0, 1.0, 0.5,
+    0.9, 0.6, 0.1, 0.0,
+  ]),
+  rows: 3, cols: 4,
+};
+
+function scaledMat(M, factor) {
+  const out = new Float32Array(M.data.length);
+  for (let i = 0; i < M.data.length; i++) out[i] = M.data[i] / factor;
+  return { data: out, rows: M.rows, cols: M.cols };
+}
+
+function buildSingleHeadToy() {
+  const rng = mulberry32(42);
+  const Wq = randMatrix(4, 4, rng);
+  const Wk = randMatrix(4, 4, rng);
+  const Wv = randMatrix(4, 4, rng);
+  const Q = matmul(X_TOY, Wq);
+  const K = matmul(X_TOY, Wk);
+  const V = matmul(X_TOY, Wv);
+  const Kt = transpose(K);
+  const scoresRaw = matmul(Q, Kt);
+  const scoresScaled = scaledMat(scoresRaw, Math.sqrt(4));
+  const A = softmaxRows(scoresScaled);
+  const Out = matmul(A, V);
+  return { Wq, Wk, Wv, Q, K, V, scoresRaw, scoresScaled, A, Out };
+}
+const TOY_SH = buildSingleHeadToy();
+
+function concatCols(A, B) {
+  const cols = A.cols + B.cols;
+  const data = new Float32Array(A.rows * cols);
+  for (let i = 0; i < A.rows; i++) {
+    for (let j = 0; j < A.cols; j++) data[i * cols + j] = A.data[i * A.cols + j];
+    for (let j = 0; j < B.cols; j++) data[i * cols + A.cols + j] = B.data[i * B.cols + j];
+  }
+  return { data, rows: A.rows, cols };
+}
+
+function buildMultiHeadToy() {
+  const headDim = 2;
+  const heads = [];
+  for (let h = 0; h < 2; h++) {
+    const rng = mulberry32(101 + h * 17);
+    const Wq = randMatrix(4, headDim, rng);
+    const Wk = randMatrix(4, headDim, rng);
+    const Wv = randMatrix(4, headDim, rng);
+    const Q = matmul(X_TOY, Wq);
+    const K = matmul(X_TOY, Wk);
+    const V = matmul(X_TOY, Wv);
+    const Kt = transpose(K);
+    const scoresRaw = matmul(Q, Kt);
+    const scoresScaled = scaledMat(scoresRaw, Math.sqrt(headDim));
+    const A = softmaxRows(scoresScaled);
+    const Y = matmul(A, V);
+    heads.push({ Wq, Wk, Wv, Q, K, V, A, Y });
+  }
+  const concat = concatCols(heads[0].Y, heads[1].Y);
+  const rng = mulberry32(999);
+  const Wo = randMatrix(4, 4, rng);
+  const Out = matmul(concat, Wo);
+  return { heads, concat, Wo, Out };
+}
+const TOY_MH = buildMultiHeadToy();
+
+function MatNumGrid({ M, label, format = 2, highlightRow = null, accent = 'auto' }) {
+  if (!M) return null;
+  let max = 0.001;
+  for (let i = 0; i < M.data.length; i++) {
+    const a = Math.abs(M.data[i]);
+    if (a > max) max = a;
+  }
+  return (
+    <div>
+      <div className="font-mono text-[10px] uppercase tracking-wider text-slate-400 mb-1 leading-tight">
+        {label}
+      </div>
+      <div
+        className="grid gap-0.5 p-1.5 rounded bg-slate-950 border border-slate-800"
+        style={{ gridTemplateColumns: `repeat(${M.cols}, minmax(0, 1fr))` }}
+      >
+        {Array.from({ length: M.rows * M.cols }, (_, idx) => {
+          const i = (idx / M.cols) | 0;
+          const j = idx % M.cols;
+          const v = M.data[idx];
+          const t = Math.abs(v) / max;
+          const isHi = highlightRow === i;
+          const positiveColor = accent === 'teal' ? '20, 184, 166' : '245, 158, 11';
+          const negativeColor = accent === 'teal' ? '245, 158, 11' : '20, 184, 166';
+          return (
+            <div
+              key={idx}
+              className={`flex items-center justify-center font-mono text-[11px] py-1 px-0.5 rounded leading-none ${
+                v >= 0
+                  ? (accent === 'teal' ? 'text-teal-200' : 'text-amber-200')
+                  : (accent === 'teal' ? 'text-amber-200' : 'text-teal-200')
+              } ${isHi ? 'ring-1 ring-amber-400' : ''}`}
+              style={{
+                background: `rgba(${v >= 0 ? positiveColor : negativeColor}, ${0.04 + t * 0.22})`,
+              }}
+              title={`row ${i}, col ${j}: ${v.toFixed(4)}`}
+            >
+              {v.toFixed(format)}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
    TAB 4 — Self-Attention
    ========================================================= */
 
@@ -878,6 +999,86 @@ function AttentionTab() {
           Attention(Q, K, V) = softmax(Q·Kᵀ / √d_k) · V
         </div>
       </Section>
+
+      {/* Numerical walk-through */}
+      <Card className="p-5">
+        <div className="flex items-baseline gap-3 mb-2">
+          <span className="font-mono text-[10px] tracking-[0.2em] text-amber-400/70 uppercase">Worked example</span>
+        </div>
+        <h3 className="font-serif text-xl text-slate-100 mb-2">Same mechanism, with actual numbers</h3>
+        <p className="text-[13px] text-slate-300 max-w-3xl mb-5 leading-relaxed">
+          Three patches, four feature dimensions. Patches <Eq>0</Eq> and <Eq>2</Eq> share a "red-ish"
+          pattern; patch <Eq>1</Eq> is "blue-ish". Watch the four steps below — by the end, the
+          attention matrix should show patch 0 and patch 2 attending strongly to each other, and
+          patch 1 standing apart.
+        </p>
+
+        <div className="space-y-5">
+          <div>
+            <div className="text-[12px] font-mono text-slate-400 mb-2">Input · X (3 patches × 4 features)</div>
+            <div className="max-w-[280px]">
+              <MatNumGrid M={X_TOY} label="X" />
+            </div>
+          </div>
+
+          <div>
+            <div className="text-[12px] text-slate-300 mb-2">
+              <span className="font-mono text-amber-300">Step 1 — project.</span>{' '}
+              Multiply X by three learned matrices to get queries, keys, values.
+            </div>
+            <div className="grid sm:grid-cols-3 gap-3 mb-2">
+              <MatNumGrid M={TOY_SH.Wq} label="W_Q (4×4)" />
+              <MatNumGrid M={TOY_SH.Wk} label="W_K (4×4)" accent="teal" />
+              <MatNumGrid M={TOY_SH.Wv} label="W_V (4×4)" />
+            </div>
+            <div className="grid sm:grid-cols-3 gap-3">
+              <MatNumGrid M={TOY_SH.Q} label="Q = X·W_Q  (3×4)" />
+              <MatNumGrid M={TOY_SH.K} label="K = X·W_K  (3×4)" accent="teal" />
+              <MatNumGrid M={TOY_SH.V} label="V = X·W_V  (3×4)" />
+            </div>
+          </div>
+
+          <div>
+            <div className="text-[12px] text-slate-300 mb-2">
+              <span className="font-mono text-amber-300">Step 2 — score & scale.</span>{' '}
+              Each row of Q dot-products against every row of K, divided by <Eq>√d_k = 2</Eq>.
+            </div>
+            <div className="grid sm:grid-cols-2 gap-3 max-w-[520px]">
+              <MatNumGrid M={TOY_SH.scoresRaw} label="scores = Q·Kᵀ  (3×3)" />
+              <MatNumGrid M={TOY_SH.scoresScaled} label="scores / √4" />
+            </div>
+          </div>
+
+          <div>
+            <div className="text-[12px] text-slate-300 mb-2">
+              <span className="font-mono text-amber-300">Step 3 — softmax.</span>{' '}
+              Normalize each row to sum to 1. This is the attention matrix A.
+            </div>
+            <div className="max-w-[260px]">
+              <MatNumGrid M={TOY_SH.A} label="A = softmax(scores/√d)  ← rows sum to 1.00" />
+            </div>
+            <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">
+              Read row 0: how patch 0 distributes its attention over patches 0, 1, 2. As intended,
+              the weights on patches 0 and 2 are larger than on patch 1.
+            </p>
+          </div>
+
+          <div>
+            <div className="text-[12px] text-slate-300 mb-2">
+              <span className="font-mono text-amber-300">Step 4 — aggregate.</span>{' '}
+              Weighted sum of value vectors using row i of A as weights gives the new
+              representation for patch i.
+            </div>
+            <div className="max-w-[280px]">
+              <MatNumGrid M={TOY_SH.Out} label="Out = A·V  (3×4)" />
+            </div>
+            <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">
+              Each output row is a blend of all V rows weighted by attention. Row 0 looks
+              similar to row 2 because patches 0 and 2 attended to each other strongly.
+            </p>
+          </div>
+        </div>
+      </Card>
 
       <div className="flex gap-2 mb-2 overflow-x-auto pb-2">
         {steps.map(s => (
@@ -1106,6 +1307,81 @@ function MultiHeadTab() {
           head_i = Attention(QW_Q^i, KW_K^i, VW_V^i)
         </div>
       </Section>
+
+      {/* Numerical walk-through */}
+      <Card className="p-5">
+        <div className="flex items-baseline gap-3 mb-2">
+          <span className="font-mono text-[10px] tracking-[0.2em] text-amber-400/70 uppercase">Worked example</span>
+        </div>
+        <h3 className="font-serif text-xl text-slate-100 mb-2">Two heads, in numbers</h3>
+        <p className="text-[13px] text-slate-300 max-w-3xl mb-5 leading-relaxed">
+          Same 3-patch input as the Self-Attention tab. Now <Eq>D = 4</Eq> is split across
+          <Eq> h = 2</Eq> heads with <Eq>d_k = 2</Eq>. Each head has its own
+          <Eq> W_Q, W_K, W_V</Eq> (different random init), produces its own attention pattern,
+          and the two outputs are concatenated and projected by <Eq>W_O</Eq>.
+        </p>
+
+        <div className="space-y-5">
+          <div>
+            <div className="text-[12px] font-mono text-slate-400 mb-2">Input · X (3 patches × 4 features) — same as before</div>
+            <div className="max-w-[280px]">
+              <MatNumGrid M={X_TOY} label="X" />
+            </div>
+          </div>
+
+          {TOY_MH.heads.map((h, i) => (
+            <div key={i} className="rounded-lg border border-slate-800/60 p-4 bg-slate-900/30">
+              <div className="text-[12px] text-slate-300 mb-3">
+                <span className="font-mono text-amber-300">Head {i}.</span>{' '}
+                Each projection is now 4×<strong>2</strong> instead of 4×4 — half the columns,
+                half the work per head.
+              </div>
+              <div className="grid sm:grid-cols-3 gap-3 mb-3">
+                <MatNumGrid M={h.Wq} label={`W_Q^${i}  (4×2)`} />
+                <MatNumGrid M={h.Wk} label={`W_K^${i}  (4×2)`} accent="teal" />
+                <MatNumGrid M={h.Wv} label={`W_V^${i}  (4×2)`} />
+              </div>
+              <div className="grid sm:grid-cols-3 gap-3 mb-3">
+                <MatNumGrid M={h.Q} label={`Q^${i}  (3×2)`} />
+                <MatNumGrid M={h.K} label={`K^${i}  (3×2)`} accent="teal" />
+                <MatNumGrid M={h.V} label={`V^${i}  (3×2)`} />
+              </div>
+              <div className="grid sm:grid-cols-2 gap-3 max-w-[460px]">
+                <MatNumGrid M={h.A} label={`A^${i} = softmax(Q^${i}·(K^${i})ᵀ / √2)`} />
+                <MatNumGrid M={h.Y} label={`head_${i} = A^${i}·V^${i}  (3×2)`} />
+              </div>
+            </div>
+          ))}
+
+          <div>
+            <div className="text-[12px] text-slate-300 mb-2">
+              <span className="font-mono text-amber-300">Concatenate.</span>{' '}
+              Stick the two head outputs side-by-side. Notice how
+              <Eq> head_0 (3×2) ‖ head_1 (3×2) = (3×4)</Eq> — back to the original D.
+            </div>
+            <div className="max-w-[280px]">
+              <MatNumGrid M={TOY_MH.concat} label="concat = [head_0 | head_1]  (3×4)" />
+            </div>
+          </div>
+
+          <div>
+            <div className="text-[12px] text-slate-300 mb-2">
+              <span className="font-mono text-amber-300">Output projection.</span>{' '}
+              The concatenated heads are mixed by <Eq>W_O</Eq> back into the model dimension.
+            </div>
+            <div className="grid sm:grid-cols-2 gap-3 max-w-[560px]">
+              <MatNumGrid M={TOY_MH.Wo} label="W_O  (4×4)" />
+              <MatNumGrid M={TOY_MH.Out} label="Out = concat · W_O  (3×4)" />
+            </div>
+            <p className="text-[11px] text-slate-400 mt-3 leading-relaxed max-w-2xl">
+              Compare each head's attention matrix above: head 0 and head 1 give
+              <em> different</em> weights for the same patches because they use different
+              random projections. That's the whole point — each head learns a different
+              relationship, and <Eq>W_O</Eq> blends them.
+            </p>
+          </div>
+        </div>
+      </Card>
 
       <div className="grid lg:grid-cols-[auto_1fr] gap-6">
         <Card className="p-5">
@@ -2657,8 +2933,8 @@ function LiveDemoTab() {
         </div>
       </Card>
 
-      <div className="grid lg:grid-cols-2 gap-4">
-        <Card className="p-5">
+      <div className="grid sm:grid-cols-2 gap-4">
+        <Card className="p-4">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <Tag color="amber">ViT</Tag>
@@ -2666,13 +2942,21 @@ function LiveDemoTab() {
             </div>
             <span className="text-[10px] font-mono text-slate-500 uppercase">O(N²)</span>
           </div>
-          <canvas ref={vitRef} className="w-full rounded-lg bg-slate-950 aspect-square" />
-          <p className="text-[12px] text-slate-400 mt-3 leading-relaxed">
-            Lines from the bright patch reach <em>every</em> other patch. Expensive, but lets
-            distant pixels talk directly.
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <div className="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-1">Scan</div>
+              <canvas ref={vitRef} className="w-full rounded bg-slate-950 aspect-square" />
+            </div>
+            <div>
+              <div className="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-1">Attention matrix</div>
+              <canvas ref={vitMatRef} className="w-full rounded bg-slate-950 aspect-square" />
+            </div>
+          </div>
+          <p className="text-[11px] text-slate-400 mt-3 leading-relaxed">
+            Lines reach every other patch · matrix fills densely (every row touches every column).
           </p>
         </Card>
-        <Card className="p-5">
+        <Card className="p-4">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <Tag color="teal">Swin</Tag>
@@ -2680,43 +2964,21 @@ function LiveDemoTab() {
             </div>
             <span className="text-[10px] font-mono text-slate-500 uppercase">O(N)</span>
           </div>
-          <canvas ref={swinRef} className="w-full rounded-lg bg-slate-950 aspect-square" />
-          <p className="text-[12px] text-slate-400 mt-3 leading-relaxed">
-            Attention stays inside the bright 4×4 window. Cheaper at high resolution; later
-            layers <em>shift</em> windows to mix neighbours.
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <div className="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-1">Scan</div>
+              <canvas ref={swinRef} className="w-full rounded bg-slate-950 aspect-square" />
+            </div>
+            <div>
+              <div className="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-1">Attention matrix</div>
+              <canvas ref={swinMatRef} className="w-full rounded bg-slate-950 aspect-square" />
+            </div>
+          </div>
+          <p className="text-[11px] text-slate-400 mt-3 leading-relaxed">
+            Attention stays inside one window · matrix is block-diagonal (4 windows of 16 patches).
           </p>
         </Card>
       </div>
-
-      <Card className="p-5">
-        <div className="flex items-center gap-2 mb-1">
-          <Network size={16} className="text-slate-300"/>
-          <h3 className="font-serif text-base text-slate-100">Attention Matrices</h3>
-          <span className="text-[11px] font-mono text-slate-500">— what each patch attends to</span>
-        </div>
-        <p className="text-[12px] text-slate-400 mb-4 leading-relaxed">
-          Each row is a query patch; each column is a key patch. Brightness = attention weight.
-          Rows fill in as the scan progresses. ViT's matrix is dense — every patch can talk
-          to every other. Swin's is <em>block-diagonal</em> — only patches inside the same
-          window can communicate, which is why it's so much cheaper.
-        </p>
-        <div className="grid sm:grid-cols-2 gap-4">
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <Tag color="amber">ViT</Tag>
-              <span className="text-[11px] font-mono text-slate-500">dense · 64×64</span>
-            </div>
-            <canvas ref={vitMatRef} className="w-full rounded bg-slate-950 aspect-square" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <Tag color="teal">Swin</Tag>
-              <span className="text-[11px] font-mono text-slate-500">block-diagonal · 4 windows of 16</span>
-            </div>
-            <canvas ref={swinMatRef} className="w-full rounded bg-slate-950 aspect-square" />
-          </div>
-        </div>
-      </Card>
 
       <Card className="p-5">
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
