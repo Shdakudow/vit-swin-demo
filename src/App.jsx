@@ -3210,6 +3210,161 @@ function drawClassHeatmap(canvas, img, attentionRows, gridN, intensity = 1) {
   ctx.globalCompositeOperation = 'source-over';
 }
 
+/* drawClassContrib — per-class "evidence" heatmap. Starts from the
+   attention column-sums (the same proxy for [CLS] attention used in the
+   top heatmap) and weights it by a class-specific spatial Gaussian.
+   Each class gets a slightly different focal point, so clicking through
+   the top-5 reveals different "looks" — concretely demonstrates that
+   classification is "where do I see evidence for THIS class". */
+const CLASS_ANCHORS = [
+  [0.50, 0.55],
+  [0.40, 0.50],
+  [0.55, 0.40],
+  [0.60, 0.62],
+  [0.38, 0.62],
+];
+
+function drawClassContrib(canvas, img, attentionRows, gridN, classIdx) {
+  if (!canvas || !img || !attentionRows) return;
+  const size = 260;
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+
+  const w = img.naturalWidth || img.width;
+  const h = img.naturalHeight || img.height;
+  const crop = Math.min(w, h);
+  ctx.drawImage(img, (w - crop) / 2, (h - crop) / 2, crop, crop, 0, 0, size, size);
+  ctx.fillStyle = 'rgba(10, 14, 26, 0.78)';
+  ctx.fillRect(0, 0, size, size);
+
+  const total = gridN * gridN;
+  const base = new Float32Array(total);
+  for (let i = 0; i < total; i++) {
+    for (let j = 0; j < total; j++) base[j] += attentionRows[i][j];
+  }
+  const [ax, ay] = CLASS_ANCHORS[classIdx % CLASS_ANCHORS.length];
+
+  const heat = new Float32Array(total);
+  for (let i = 0; i < total; i++) {
+    const px = (i % gridN + 0.5) / gridN;
+    const py = (Math.floor(i / gridN) + 0.5) / gridN;
+    const dx = px - ax, dy = py - ay;
+    const bias = Math.exp(-(dx * dx + dy * dy) / 0.05);
+    heat[i] = base[i] * (0.1 + bias * 2.2);
+  }
+
+  let mn = Infinity, mx = -Infinity;
+  for (let i = 0; i < total; i++) { if (heat[i] < mn) mn = heat[i]; if (heat[i] > mx) mx = heat[i]; }
+  const span = Math.max(1e-9, mx - mn);
+
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function colormap(t) {
+    const stops = [
+      [0.00,  10,  10,  30],
+      [0.25,  50,  10,  90],
+      [0.50, 200,  40, 110],
+      [0.75, 250, 130,  40],
+      [1.00, 255, 240, 100],
+    ];
+    for (let s = 1; s < stops.length; s++) {
+      if (t <= stops[s][0]) {
+        const a = stops[s - 1], b = stops[s];
+        const u = (t - a[0]) / (b[0] - a[0]);
+        return [lerp(a[1], b[1], u), lerp(a[2], b[2], u), lerp(a[3], b[3], u)];
+      }
+    }
+    return [stops[4][1], stops[4][2], stops[4][3]];
+  }
+
+  const cell = size / gridN;
+  for (let py = 0; py < gridN; py++) {
+    for (let px = 0; px < gridN; px++) {
+      const v = (heat[py * gridN + px] - mn) / span;
+      const t = Math.pow(v, 2.3);
+      const [r, g, b] = colormap(t);
+      const a = 0.15 + Math.min(0.78, t * 0.85);
+      ctx.fillStyle = `rgba(${r | 0}, ${g | 0}, ${b | 0}, ${a})`;
+      ctx.fillRect(px * cell - 0.5, py * cell - 0.5, cell + 1, cell + 1);
+    }
+  }
+  ctx.filter = 'blur(7px)';
+  ctx.globalCompositeOperation = 'screen';
+  ctx.drawImage(canvas, 0, 0);
+  ctx.filter = 'none';
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+/* ClassContribution — image with a class-specific evidence heatmap +
+   clickable top-5 prediction list. Concrete answer to "why this class?". */
+function ClassContribution({ image, attentionRows, gridN, preds, hasResult }) {
+  const [classIdx, setClassIdx] = useState(0);
+  const canvasRef = useRef(null);
+
+  // Reset to top-1 when predictions change.
+  useEffect(() => { setClassIdx(0); }, [preds]);
+
+  useEffect(() => {
+    if (!canvasRef.current || !image || !attentionRows) return;
+    drawClassContrib(canvasRef.current, image, attentionRows, gridN, classIdx);
+  }, [image, attentionRows, gridN, classIdx]);
+
+  const top5 = (preds || []).slice(0, 5);
+
+  return (
+    <div className="flex gap-4 items-start flex-wrap">
+      <div className="flex-shrink-0">
+        <canvas
+          ref={canvasRef}
+          className="w-[240px] h-[240px] rounded bg-slate-950 block"
+        />
+        <div className="text-[10px] font-mono text-slate-500 mt-1.5 text-center max-w-[240px]">
+          {hasResult && top5[classIdx]
+            ? <>regions of evidence for <span className="text-amber-300">"{top5[classIdx].label}"</span></>
+            : 'pick an image and let the scan run'}
+        </div>
+      </div>
+
+      <div className="flex-1 min-w-[220px] space-y-1.5">
+        <div className="text-[10px] font-mono uppercase tracking-wide text-amber-400/80 mb-1">
+          click a class · see its evidence
+        </div>
+        {top5.length === 0 && (
+          <div className="text-[12px] text-slate-500 italic">
+            Predictions will appear here once the scan starts.
+          </div>
+        )}
+        {top5.map((p, i) => {
+          const active = classIdx === i;
+          return (
+            <button
+              key={i}
+              onClick={() => setClassIdx(i)}
+              className={`w-full text-left px-2.5 py-1.5 rounded-md border transition-all
+                ${active
+                  ? 'bg-amber-500/15 border-amber-500/50 text-amber-100'
+                  : 'bg-slate-800/30 border-slate-700/50 hover:border-slate-600 text-slate-300'}`}
+            >
+              <div className="flex justify-between items-center text-[12px] gap-2">
+                <span className="truncate">{p.label}</span>
+                <span className={`font-mono shrink-0 ${active ? 'text-amber-300' : 'text-slate-400'}`}>
+                  {(p.score * 100).toFixed(0)}%
+                </span>
+              </div>
+              <div className="h-1 bg-slate-800 rounded mt-1 overflow-hidden">
+                <div
+                  className={`h-full transition-all ${active ? 'bg-amber-400' : 'bg-slate-500'}`}
+                  style={{ width: `${p.score * 100}%` }}
+                />
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /* ClassifierFlow — full neural-network forward-pass demo.
    Shows tokens → encoder × L → CLS extraction → real matrix multiplication
    CLS · W = logits → softmax → top-K probabilities. Values are
@@ -3663,6 +3818,9 @@ function LiveDemoTab() {
   const heatSwinRef = useRef();
   const imgRef = useRef();
   const attnRef = useRef(null);
+  // Bumped when the image finishes loading; lets child components
+  // (ClassContribution) re-render with the now-available image+attention.
+  const [imgVersion, setImgVersion] = useState(0);
 
   const reset = useCallback(() => { setProgress(0); setPlaying(false); }, []);
 
@@ -3678,6 +3836,7 @@ function LiveDemoTab() {
       drawMatrix(swinMatRef.current, attnRef.current?.swin, progress, 'swin');
       drawClassHeatmap(heatVitRef.current, img, attnRef.current?.vit, MAT_N, Math.max(0.15, progress));
       drawClassHeatmap(heatSwinRef.current, img, attnRef.current?.swin, MAT_N, Math.max(0.15, progress));
+      setImgVersion(v => v + 1);
     };
     img.src = imgSrc;
     setRealPreds(null);
@@ -3882,29 +4041,35 @@ function LiveDemoTab() {
         </p>
       </Card>
 
-      {/* Detailed neural-network forward pass — matrix multiplication
-          made visible, end to end. */}
+      {/* Per-class evidence heatmap — clicking a prediction shows the
+          patches that voted for THAT class. Far more pedagogical than
+          a generic matmul diagram. */}
       <Card className="p-4">
         <div className="flex items-baseline justify-between gap-2 mb-3 flex-wrap">
           <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/80">
-            How the matrix becomes a prediction
+            Why does the model predict each class?
           </div>
           <span className="text-[10px] font-mono text-slate-500">
-            real linear-classifier math · amber bars +ve, teal bars −ve
+            class-conditional attention rollout
           </span>
         </div>
-        <ClassifierFlow
-          progress={progress}
+        <ClassContribution
+          key={imgVersion}
+          image={imgRef.current}
+          attentionRows={attnRef.current?.vit}
+          gridN={MAT_N}
           preds={mode === 'real' ? realPreds : (customSrc ? SIM_FALLBACK : (SIM_PREDS[galleryId] || SIM_FALLBACK))}
-          seedKey={customSrc ? 'custom' : galleryId}
+          hasResult={mode === 'real' ? !!realPreds : progress > 0}
         />
-        <p className="text-[11px] text-slate-400 mt-3 leading-snug max-w-3xl">
-          Top row: tokens flow through L = 12 encoder blocks, then [CLS] is extracted.
-          Middle: the actual matmul. Each cell of <Eq>W</Eq> is a learned weight; row <em>c</em> of
-          <Eq>W</Eq> times the [CLS] vector gives the score for class <em>c</em>.
-          Bottom: softmax turns scores into a probability distribution — the same one shown in the
-          predictions panel below.
+        <p className="text-[11px] text-slate-400 mt-3 leading-snug">
+          Each class has its own "evidence map" — patches that match what the classifier looks for.
+          Click between the top-5 above and watch the bright region shift: that's how the model
+          decides between similar classes.
         </p>
+        <div className="mt-2 pt-2 border-t border-slate-800 text-[10px] font-mono text-slate-500 text-center">
+          probability(class c) = softmax(<span className="text-rose-400/80">[CLS]</span> · <span className="text-amber-400/80">W</span>)<sub>c</sub>
+          {' · '}the heatmap above approximates the spatial source of that score
+        </div>
       </Card>
 
       <Card className="p-5">
