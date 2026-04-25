@@ -3130,6 +3130,109 @@ function drawMatrix(canvas, A, progress, mode) {
   }
 }
 
+/* drawClassHeatmap — given the precomputed ViT attention matrix
+   (MAT_N × MAT_N grid), render the image with a heatmap overlay
+   highlighting which regions the model "looked at". We use the
+   column-sums of the attention matrix as a proxy for [CLS] attention:
+   patches that many queries attend TO are the ones driving the
+   output representation, and therefore the prediction. */
+function drawClassHeatmap(canvas, img, attentionRows, gridN, intensity = 1) {
+  if (!canvas || !img || !attentionRows) return;
+  const size = 320;
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+
+  // Draw image dimmed, so the heatmap reads on top.
+  const w = img.naturalWidth || img.width;
+  const h = img.naturalHeight || img.height;
+  const crop = Math.min(w, h);
+  ctx.drawImage(img, (w - crop) / 2, (h - crop) / 2, crop, crop, 0, 0, size, size);
+  ctx.fillStyle = 'rgba(10, 14, 26, 0.55)';
+  ctx.fillRect(0, 0, size, size);
+
+  const total = gridN * gridN;
+  const colSums = new Float32Array(total);
+  for (let i = 0; i < total; i++) {
+    for (let j = 0; j < total; j++) colSums[j] += attentionRows[i][j];
+  }
+  let maxV = 1e-9;
+  for (let i = 0; i < total; i++) if (colSums[i] > maxV) maxV = colSums[i];
+
+  // Bilinearly upsample to a smooth heat overlay.
+  const cell = size / gridN;
+  for (let py = 0; py < gridN; py++) {
+    for (let px = 0; px < gridN; px++) {
+      const v = colSums[py * gridN + px] / maxV;
+      const t = Math.pow(v, 1.6) * intensity;
+      // amber → red gradient as t grows
+      const r = 245, g = 158 - t * 80, b = 11 + t * 40;
+      const a = Math.min(0.78, t * 0.95);
+      ctx.fillStyle = `rgba(${r}, ${g | 0}, ${b | 0}, ${a})`;
+      ctx.fillRect(px * cell - 0.5, py * cell - 0.5, cell + 1, cell + 1);
+    }
+  }
+
+  // Soft-blur the heatmap by drawing a translucent blurred copy.
+  ctx.filter = 'blur(6px)';
+  ctx.globalCompositeOperation = 'screen';
+  ctx.drawImage(canvas, 0, 0);
+  ctx.filter = 'none';
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+/* MiniArch — small horizontal flow diagram that lights up as the scan
+   progresses, framing the attention matrix as one step inside a larger
+   neural-network pipeline:
+       N patches → encoder × L → CLS → linear classifier → top class.
+   This is what "how the matrix is applied" looks like at the model level. */
+function MiniArch({ progress, topPred }) {
+  const stage = progress >= 0.99
+    ? 4
+    : progress >= 0.7 ? 3
+    : progress >= 0.4 ? 2
+    : progress >= 0.1 ? 1 : 0;
+
+  const ArchBox = ({ children, sub, active, highlight, accent = 'amber' }) => {
+    const palette = {
+      amber: 'border-amber-500/50 bg-amber-500/15 text-amber-100',
+      rose:  'border-rose-500/50 bg-rose-500/15 text-rose-100',
+      teal:  'border-teal-500/50 bg-teal-500/15 text-teal-100',
+    };
+    return (
+      <div
+        className={`flex flex-col items-center justify-center px-3 py-2 rounded-lg border min-w-[96px] text-center transition-all
+          ${active
+            ? `${palette[accent]} ${highlight ? 'shadow-md scale-[1.03]' : ''}`
+            : 'bg-slate-800/30 border-slate-700/60 text-slate-500'}`}
+      >
+        <div className="text-[12px] font-mono leading-tight">{children}</div>
+        {sub && <div className="text-[9px] font-mono mt-0.5 opacity-70">{sub}</div>}
+      </div>
+    );
+  };
+  const Arr = ({ active }) => (
+    <div className={`text-lg font-mono ${active ? 'text-amber-400' : 'text-slate-700'}`}>→</div>
+  );
+
+  return (
+    <div className="flex items-stretch justify-between gap-2 flex-wrap">
+      <ArchBox active={stage >= 0} highlight={stage === 0} sub="image → tokens">N patches</ArchBox>
+      <Arr active={stage >= 1}/>
+      <ArchBox active={stage >= 1} highlight={stage === 1} sub="self-attention">Encoder × L</ArchBox>
+      <Arr active={stage >= 2}/>
+      <ArchBox active={stage >= 2} highlight={stage === 2} sub="aggregated" accent="rose">[CLS]</ArchBox>
+      <Arr active={stage >= 3}/>
+      <ArchBox active={stage >= 3} highlight={stage === 3} sub="D → C">Linear</ArchBox>
+      <Arr active={stage >= 4}/>
+      <ArchBox active={stage >= 4} highlight={stage === 4} accent="teal"
+        sub={topPred ? `${(topPred.score * 100).toFixed(0)}%` : ''}>
+        {topPred ? topPred.label : 'top class'}
+      </ArchBox>
+    </div>
+  );
+}
+
 function PredictionBars({ preds, accent }) {
   const max = (preds && preds[0]?.score) || 1;
   return (
@@ -3179,6 +3282,7 @@ function LiveDemoTab() {
   const swinRef = useRef();
   const vitMatRef = useRef();
   const swinMatRef = useRef();
+  const heatRef = useRef();
   const imgRef = useRef();
   const attnRef = useRef(null);
 
@@ -3194,6 +3298,7 @@ function LiveDemoTab() {
       drawScan(swinRef.current, img, 360, patchSize, progress, 'swin');
       drawMatrix(vitMatRef.current, attnRef.current?.vit, progress, 'vit');
       drawMatrix(swinMatRef.current, attnRef.current?.swin, progress, 'swin');
+      drawClassHeatmap(heatRef.current, img, attnRef.current?.vit, MAT_N, Math.max(0.15, progress));
     };
     img.src = imgSrc;
     setRealPreds(null);
@@ -3207,6 +3312,7 @@ function LiveDemoTab() {
     drawScan(swinRef.current, imgRef.current, 360, patchSize, progress, 'swin');
     drawMatrix(vitMatRef.current, attnRef.current?.vit, progress, 'vit');
     drawMatrix(swinMatRef.current, attnRef.current?.swin, progress, 'swin');
+    drawClassHeatmap(heatRef.current, imgRef.current, attnRef.current?.vit, MAT_N, Math.max(0.15, progress));
   }, [patchSize, progress]);
 
   useEffect(() => {
@@ -3362,6 +3468,35 @@ function LiveDemoTab() {
           </div>
           <p className="text-[11px] text-slate-400 mt-3 leading-relaxed">
             Attention stays inside one window · matrix is block-diagonal (4 windows of 16 patches).
+          </p>
+        </Card>
+      </div>
+
+      {/* Class-attention heatmap + architecture flow — bridge from
+          "the matrix" to "and that's why the model predicts X". */}
+      <div className="grid lg:grid-cols-[auto_1fr] gap-4 items-stretch">
+        <Card className="p-4">
+          <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/80 mb-2">
+            What the model is looking at
+          </div>
+          <canvas ref={heatRef} className="w-full max-w-[280px] mx-auto rounded bg-slate-950 aspect-square block" />
+          <p className="text-[11px] text-slate-400 mt-2 max-w-[280px] mx-auto leading-relaxed">
+            Bright regions = patches the attention matrix funnels information <em>into</em>.
+            That's where the [CLS] token gets most of its content from, and so it's what
+            ultimately drives the prediction.
+          </p>
+        </Card>
+
+        <Card className="p-4">
+          <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/80 mb-3">
+            How the matrix becomes a prediction
+          </div>
+          <MiniArch progress={progress} topPred={(mode === 'real' ? realPreds : (customSrc ? SIM_FALLBACK : (SIM_PREDS[galleryId] || SIM_FALLBACK)))?.[0]} />
+          <p className="text-[12px] text-slate-400 mt-4 leading-relaxed">
+            The attention matrix you saw above is what happens <em>inside</em> the
+            "Encoder × L" box. After L blocks, the [CLS] token has gathered information
+            from every patch (weighted by attention). That single vector goes through one
+            linear layer to produce class scores — softmaxed into the bars below.
           </p>
         </Card>
       </div>
