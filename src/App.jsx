@@ -777,13 +777,13 @@ function SimHeatmap({ data, N }) {
    ========================================================= */
 
 function AttentionTab() {
-  const [patchSize, setPatchSize] = useState(64);
+  const [patchSize, setPatchSize] = useState(48);
   const [selectedPatch, setSelectedPatch] = useState(null);
   const [seed, setSeed] = useState(7);
   const [step, setStep] = useState(4);
   const canvasRef = useRef(null);
   const overlayRef = useRef(null);
-  const SIZE = 256;
+  const SIZE = 240; // chosen so 30 / 48 / 60 px patches all divide cleanly
   const grid = SIZE / patchSize;
   const N = grid * grid;
   const D = 16;
@@ -979,7 +979,7 @@ function AttentionTab() {
             {selectedPatch !== null ? `Query: patch #${selectedPatch}` : 'Click a patch to set the query'}
           </div>
           <div
-            className="relative w-[256px] h-[256px] rounded-lg overflow-hidden ring-1 ring-slate-700 cursor-crosshair"
+            className="relative w-[240px] h-[240px] rounded-lg overflow-hidden ring-1 ring-slate-700 cursor-crosshair"
             onClick={handleClick}
           >
             <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
@@ -987,9 +987,9 @@ function AttentionTab() {
           </div>
           <div className="mt-4 space-y-3">
             <Slider
-              label="Patch size"
+              label="Patch size (px)"
               value={patchSize}
-              options={[16, 32, 64]}
+              options={[30, 48, 60]}
               onChange={(v) => { setPatchSize(v); setSelectedPatch(null); }}
             />
             <Slider label="Random seed (W_Q, W_K, W_V)" value={seed} min={1} max={50} onChange={setSeed} />
@@ -1115,26 +1115,32 @@ function StepMatrix({ scores, attn, N, selectedPatch, step, onCellClick }) {
 
   const M = step === 1 ? scores : attn;
 
-  let topMask = null;
-  const topK = 3;
-  if (step === 3) {
-    topMask = new Uint8Array(N * N);
+  // Cache the per-row top-K mask so step 3 doesn't recompute on every render.
+  const topMask = useMemo(() => {
+    if (step !== 3 || !attn || attn.data.length !== N * N) return null;
+    const topK = 3;
+    const mask = new Uint8Array(N * N);
     for (let i = 0; i < N; i++) {
       const row = [];
       for (let j = 0; j < N; j++) row.push({ j, w: attn.data[i * N + j] });
       row.sort((a, b) => b.w - a.w);
-      for (let k = 0; k < Math.min(topK, N); k++) topMask[i * N + row[k].j] = 1;
+      for (let k = 0; k < Math.min(topK, N); k++) mask[i * N + row[k].j] = 1;
     }
-  }
+    return mask;
+  }, [attn, step, N]);
 
-  let maxAbs = 1e-9;
-  for (let i = 0; i < M.data.length; i++) {
-    const a = Math.abs(M.data[i]);
-    if (a > maxAbs) maxAbs = a;
-  }
+  // Cache the value range for the diverging colormap on step 1.
+  const maxAbs = useMemo(() => {
+    let m = 1e-9;
+    for (let i = 0; i < M.data.length; i++) {
+      const a = Math.abs(M.data[i]);
+      if (a > m) m = a;
+    }
+    return m;
+  }, [M]);
 
-  const showNumbers = N <= 16;
-  const fontPx = N <= 4 ? 14 : N <= 9 ? 11 : N <= 16 ? 9 : 7;
+  const showNumbers = N <= 36;
+  const fontPx = N <= 4 ? 14 : N <= 9 ? 11 : N <= 16 ? 9 : N <= 25 ? 8 : N <= 36 ? 7 : 6;
 
   return (
     <div
@@ -1182,7 +1188,7 @@ function StepMatrix({ scores, attn, N, selectedPatch, step, onCellClick }) {
               textShadow: '0 0 2px rgba(0,0,0,0.85)',
               aspectRatio: '1',
             }}
-            title={`row ${i}, col ${j}: ${v.toFixed(4)}`}
+            title={`row ${i}, col ${j}: ${Number.isFinite(v) ? v.toFixed(4) : '—'}`}
           >
             {label}
           </button>
@@ -1215,13 +1221,13 @@ function TopAttended({ attn, N, query, grid, patchSize }) {
 
 function MultiHeadTab() {
   const [numHeads, setNumHeads] = useState(4);
-  const [selectedPatch, setSelectedPatch] = useState(5);
+  const [selectedPatch, setSelectedPatch] = useState(12);
   const [activeHead, setActiveHead] = useState(0);
   const canvasRef = useRef(null);
-  const SIZE = 256;
-  const patchSize = 64;
-  const grid = SIZE / patchSize; // 4
-  const N = grid * grid; // 16
+  const SIZE = 240;
+  const patchSize = 48;
+  const grid = SIZE / patchSize; // 5
+  const N = grid * grid; // 25
   const D = 32;
   const headDim = D / numHeads;
 
@@ -1269,7 +1275,7 @@ function MultiHeadTab() {
             Query patch · click to change
           </div>
           <div
-            className="relative w-[256px] h-[256px] rounded-lg overflow-hidden ring-1 ring-slate-700 cursor-crosshair"
+            className="relative w-[240px] h-[240px] rounded-lg overflow-hidden ring-1 ring-slate-700 cursor-crosshair"
             onClick={(e) => {
               const rect = e.currentTarget.getBoundingClientRect();
               const x = ((e.clientX - rect.left) / rect.width) * SIZE;
