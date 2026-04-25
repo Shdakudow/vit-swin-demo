@@ -3,7 +3,7 @@ import {
   Grid3x3, Eye, Layers, Play, Pause, RotateCcw, ChevronRight,
   Box, Network, GitBranch, Move, BookOpen,
   ArrowRight, Hash, Crosshair, Workflow, Microscope, Sparkles,
-  Upload, Loader2, Brain, Cpu
+  Upload, Loader2, Brain, Cpu, HelpCircle, Lightbulb, Check, X
 } from 'lucide-react';
 
 /* =========================================================
@@ -2867,6 +2867,331 @@ function LiveDemoTab() {
 }
 
 /* =========================================================
+   PRACTICE — exam-style questions with hints + explanations
+   ========================================================= */
+
+const QUESTIONS = [
+  {
+    id: 'q1',
+    question: 'Why does ViT split an image into patches instead of feeding individual pixels to the transformer?',
+    hints: [
+      'Think about what kind of input a transformer naturally consumes — and how big it can practically be.',
+      'A 224×224 image has 50,176 pixels. Self-attention is O(N²), so attending pixel-to-pixel would mean a 50k×50k score matrix per layer.',
+    ],
+    options: [
+      { text: 'Patches make image data fit in GPU memory by compressing it.', correct: false,
+        explanation: 'Patches don\'t compress information — they reshape it. Each patch is still a flat vector of pixel values, projected linearly into a token embedding.' },
+      { text: 'Transformers consume sequences of tokens, and patches turn the image into a manageably short sequence.', correct: true,
+        explanation: 'Right. ViT treats the image as N = (H·W)/P² patch-tokens. With P=16 on a 224² image you get 196 tokens — small enough that O(N²) attention is feasible.' },
+      { text: 'CNNs need patches to compute convolutions efficiently.', correct: false,
+        explanation: 'CNNs don\'t use patch tokens — they slide kernels over the full image. Patching is specific to transformer-based vision models.' },
+      { text: 'The softmax in attention requires a fixed input length of 196.', correct: false,
+        explanation: 'Softmax is length-agnostic. It\'s the quadratic compute of attention, not softmax, that constrains sequence length.' },
+    ],
+  },
+  {
+    id: 'q2',
+    question: 'What is the [CLS] token in ViT?',
+    hints: [
+      'It exists at the input of the transformer but isn\'t computed from the image itself.',
+      'It\'s a learned vector — and after the last layer, its output gets fed into the classification head.',
+    ],
+    options: [
+      { text: 'The first patch (top-left) in raster scan order.', correct: false,
+        explanation: 'The first patch is just patch 0 — an image patch like any other. The [CLS] token is prepended *in addition to* the patches.' },
+      { text: 'A learned embedding prepended to the patch sequence whose final hidden state is used as the image representation.', correct: true,
+        explanation: 'Yes. [CLS] is a learnable parameter. Through self-attention it gathers information from all patch tokens; its final output is fed to a linear classifier.' },
+      { text: 'A position embedding for the patch with the strongest activation.', correct: false,
+        explanation: 'Position embeddings are added to all tokens (including [CLS]) and depend on position, not activation.' },
+      { text: 'The class label predicted by the model on the previous training example.', correct: false,
+        explanation: '[CLS] is fixed and learned during training — it does not depend on previous predictions or examples.' },
+    ],
+  },
+  {
+    id: 'q3',
+    question: 'What is the asymptotic compute cost of full self-attention over N tokens with embedding dimension d?',
+    hints: [
+      'Each token computes a similarity score against every other token.',
+      'You build an N×N matrix of scores, then do a softmax and weighted sum.',
+    ],
+    options: [
+      { text: 'O(N · d)', correct: false,
+        explanation: 'That\'s the cost of a single projection (e.g. computing one token\'s Q vector), not of full attention.' },
+      { text: 'O(N · log N · d)', correct: false,
+        explanation: 'Sub-quadratic costs like this come up in efficient/sparse attention variants, but standard self-attention is fully quadratic in N.' },
+      { text: 'O(N² · d)', correct: true,
+        explanation: 'Computing the score matrix QKᵀ is O(N²·d), and the weighted sum AV is also O(N²·d). This quadratic cost is exactly what makes high-resolution images expensive — and what Swin sidesteps with windows.' },
+      { text: 'O(d²)', correct: false,
+        explanation: 'O(d²) is the cost of multiplying a single token by a d×d projection matrix — a per-token cost, not the full attention cost over all tokens.' },
+    ],
+  },
+  {
+    id: 'q4',
+    question: 'Why does a transformer need explicit position embeddings?',
+    hints: [
+      'Imagine shuffling the order of the input tokens. Does pure self-attention notice?',
+      'Self-attention treats its input as a *set*, not a sequence — without position info it has no idea which patch was where.',
+    ],
+    options: [
+      { text: 'Self-attention is permutation-invariant: it produces the same output for any reordering of the inputs.', correct: true,
+        explanation: 'Right. Attention only depends on pairwise affinities, not on input order. Position embeddings break that symmetry by injecting "where" each token came from.' },
+      { text: 'Different patches have different sizes, so positions vary.', correct: false,
+        explanation: 'Patches are uniform in size (e.g. 16×16). Position embeddings exist regardless of whether patch sizes vary.' },
+      { text: 'They make the softmax numerically stable.', correct: false,
+        explanation: 'Numerical stability of softmax is handled by subtracting the max logit. Position embeddings serve a structural, not numerical, purpose.' },
+      { text: 'They encode the class label at training time.', correct: false,
+        explanation: 'Position embeddings encode location, not class. The model never sees labels through its position channel.' },
+    ],
+  },
+  {
+    id: 'q5',
+    question: 'Where does Swin\'s main efficiency win over ViT come from?',
+    hints: [
+      'It changes one specific aspect of how attention is computed.',
+      'It restricts which tokens can attend to which — locally rather than globally.',
+    ],
+    options: [
+      { text: 'It uses fewer attention heads.', correct: false,
+        explanation: 'Head count doesn\'t change asymptotic cost. Both ViT and Swin typically use multi-head attention with similar head counts.' },
+      { text: 'It restricts attention to local non-overlapping windows of patches.', correct: true,
+        explanation: 'Yes. Within a window of M×M patches, attention is O(M²) per window. Total cost is *linear* in N (number of patches) instead of quadratic — the headline result of the Swin paper.' },
+      { text: 'It quantizes weights to int8.', correct: false,
+        explanation: 'Quantization is an orthogonal optimization, not part of Swin\'s core design.' },
+      { text: 'It skips MLP layers between attention blocks.', correct: false,
+        explanation: 'Swin keeps the standard transformer block (attention + MLP). It only changes the attention\'s scope.' },
+    ],
+  },
+  {
+    id: 'q6',
+    question: 'Why does Swin alternate between regular and shifted windows in successive layers?',
+    hints: [
+      'Without shifting, what could *never* happen between two adjacent patches?',
+      'Two patches that sit on either side of a window boundary can\'t attend to each other in a fixed-window scheme.',
+    ],
+    options: [
+      { text: 'Shifting reduces the number of windows, saving compute.', correct: false,
+        explanation: 'Shifted windows actually create *more* boundary cases (handled by cyclic shift + masking), not fewer windows.' },
+      { text: 'Shifting prevents overfitting by acting as a regularizer.', correct: false,
+        explanation: 'Shifting isn\'t a regularization technique — it\'s a structural mechanism for cross-window communication.' },
+      { text: 'It allows information to flow across window boundaries between layers.', correct: true,
+        explanation: 'Right. In layer ℓ a patch sees patches in its window. In layer ℓ+1 the windows are shifted by half a window, so what used to be a boundary is now interior — patches that were separated can now attend to each other.' },
+      { text: 'It allows arbitrary input resolutions.', correct: false,
+        explanation: 'Arbitrary resolutions are handled by patch-merging and padding, not by window shifting.' },
+    ],
+  },
+  {
+    id: 'q7',
+    question: 'What does multi-head self-attention give you that single-head attention does not?',
+    hints: [
+      'Multiple heads run in parallel, each with their own Q/K/V projections.',
+      'Different heads can specialize in different *kinds* of relationships (e.g. nearby patches, color similarity, distant context).',
+    ],
+    options: [
+      { text: 'Lower asymptotic cost than single-head attention.', correct: false,
+        explanation: 'Total cost is similar; the d-dim space is just split across heads. Multi-head is about expressivity, not speed.' },
+      { text: 'Multiple parallel attention "subspaces", each learning a different pattern of relationships.', correct: true,
+        explanation: 'Yes. Each head projects Q/K/V into a smaller d/h-dim space and computes its own attention map. The outputs are concatenated, letting the layer attend to several relational structures at once.' },
+      { text: 'A learned hierarchy of resolutions.', correct: false,
+        explanation: 'Hierarchy across resolutions is what Swin\'s patch-merging provides, not what multi-head attention provides.' },
+      { text: 'Built-in positional information.', correct: false,
+        explanation: 'Positional information comes from explicit position embeddings (or relative-position biases in Swin), not from multi-head structure.' },
+    ],
+  },
+  {
+    id: 'q8',
+    question: 'How does Swin produce hierarchical, multi-scale feature maps deeper in the network?',
+    hints: [
+      'Look at how the spatial resolution shrinks between Swin stages.',
+      'Four neighboring patches get concatenated and projected into one — like a learned downsampling.',
+    ],
+    options: [
+      { text: 'Strided convolutions between stages.', correct: false,
+        explanation: 'Swin is convolution-free in its main path. Down-sampling is done by patch-merging, not strided conv.' },
+      { text: 'A learned 2×2 patch-merging layer that combines four neighboring patches into one.', correct: true,
+        explanation: 'Yes. At each stage boundary, every 2×2 group of patches is concatenated (4·C channels) then linearly projected back to 2C channels. Spatial resolution halves; channels double — exactly like a CNN feature pyramid.' },
+      { text: 'By dropping every other patch.', correct: false,
+        explanation: 'Dropping patches would lose information. Patch-merging *combines* them so no information is discarded.' },
+      { text: 'By resizing the input image between stages.', correct: false,
+        explanation: 'The input image is fixed. The hierarchy is built inside the network via patch-merging.' },
+    ],
+  },
+  {
+    id: 'q9',
+    question: 'How does ViT\'s receptive field at layer 1 compare to a CNN\'s at the same layer?',
+    hints: [
+      'Receptive field = how much of the input one neuron can "see".',
+      'In one attention layer, every token can directly attend to every other token.',
+    ],
+    options: [
+      { text: 'Smaller — patches are fixed-size and local.', correct: false,
+        explanation: 'A patch *embedding* is local, but attention then mixes information across all patches in one shot.' },
+      { text: 'Roughly the same as a CNN\'s 3×3 kernel receptive field.', correct: false,
+        explanation: 'A 3×3 kernel covers 9 pixels. ViT\'s first attention layer can mix information from *every* patch.' },
+      { text: 'Global — every patch can attend to every other patch in a single layer.', correct: true,
+        explanation: 'Right. That\'s the headline difference. CNNs build up the receptive field gradually through stacked convolutions; ViT has it from layer 1 — at the cost of O(N²) attention.' },
+      { text: 'Always zero in the first layer; only later layers see other patches.', correct: false,
+        explanation: 'Self-attention mixes tokens at every layer, including the first. The patch-embedding step before it is local, but attention is global.' },
+    ],
+  },
+  {
+    id: 'q10',
+    question: 'You have a 224×224 image with full self-attention and patch size 16. If you increase resolution to 448×448 keeping patch size at 16, by what factor does the cost of one attention layer grow?',
+    hints: [
+      'First figure out how many patches you have at each resolution.',
+      'Self-attention is O(N²). Quadrupling N quadruples N — and squares the cost.',
+    ],
+    options: [
+      { text: '2×', correct: false,
+        explanation: 'Doubling resolution doesn\'t just double the patches — it quadruples them (4× in 2D).' },
+      { text: '4×', correct: false,
+        explanation: '4× would be the right answer if attention were O(N). It\'s not — it\'s O(N²).' },
+      { text: '16×', correct: true,
+        explanation: 'Right. 224/16 = 14 → 196 patches. 448/16 = 28 → 784 patches (4× more). Self-attention is O(N²), so 4² = 16× more compute. This is exactly why Swin\'s linear-cost windowed attention matters at high resolutions.' },
+      { text: '256×', correct: false,
+        explanation: 'Too high. You\'d need patches to grow 16× (not 4×) for 16² = 256× cost. Here patches grow only 4×.' },
+    ],
+  },
+];
+
+function Question({ q, index }) {
+  const [selected, setSelected] = useState(null);
+  const [checked, setChecked] = useState(false);
+  const [hint1, setHint1] = useState(false);
+  const [hint2, setHint2] = useState(false);
+
+  const correctIdx = q.options.findIndex(o => o.correct);
+  const isCorrect = selected === correctIdx;
+
+  return (
+    <Card className="p-5">
+      <div className="flex items-baseline gap-3 mb-4">
+        <span className="font-mono text-xs text-amber-300/80 shrink-0">Q{index}</span>
+        <h3 className="font-serif text-lg text-slate-100 leading-snug">{q.question}</h3>
+      </div>
+
+      <div className="flex flex-wrap gap-2 mb-3">
+        <button
+          onClick={() => setHint1(v => !v)}
+          className={`px-2.5 py-1 rounded text-[11px] font-mono border flex items-center gap-1.5 transition-all
+            ${hint1 ? 'bg-amber-500/15 border-amber-500/40 text-amber-200' : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-600'}`}
+        >
+          <Lightbulb size={11}/> Hint 1 {hint1 ? '−' : '+'}
+        </button>
+        <button
+          onClick={() => setHint2(v => !v)}
+          className={`px-2.5 py-1 rounded text-[11px] font-mono border flex items-center gap-1.5 transition-all
+            ${hint2 ? 'bg-amber-500/15 border-amber-500/40 text-amber-200' : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-600'}`}
+        >
+          <Lightbulb size={11}/> Hint 2 (stronger) {hint2 ? '−' : '+'}
+        </button>
+      </div>
+      {hint1 && (
+        <div className="mb-2 px-3 py-2 rounded bg-amber-500/[0.07] border border-amber-500/25 text-[13px] text-amber-100/90 leading-relaxed">
+          {q.hints[0]}
+        </div>
+      )}
+      {hint2 && (
+        <div className="mb-3 px-3 py-2 rounded bg-amber-500/[0.12] border border-amber-500/40 text-[13px] text-amber-100/95 leading-relaxed">
+          {q.hints[1]}
+        </div>
+      )}
+
+      <div className="space-y-2 mb-4">
+        {q.options.map((opt, i) => {
+          const letter = String.fromCharCode(65 + i);
+          let cls;
+          if (checked) {
+            if (i === correctIdx) cls = 'bg-emerald-500/12 border-emerald-500/50 text-emerald-50';
+            else if (i === selected) cls = 'bg-rose-500/12 border-rose-500/50 text-rose-50';
+            else cls = 'bg-slate-800/30 border-slate-700/60 text-slate-400';
+          } else {
+            cls = selected === i
+              ? 'bg-amber-500/12 border-amber-500/50 text-amber-50'
+              : 'bg-slate-800/40 border-slate-700/60 text-slate-300 hover:border-slate-500';
+          }
+          return (
+            <button
+              key={i}
+              onClick={() => { if (!checked) setSelected(i); }}
+              disabled={checked}
+              className={`w-full text-left px-4 py-2.5 rounded-lg border transition-all ${cls} ${checked ? 'cursor-default' : 'cursor-pointer'}`}
+            >
+              <div className="flex items-start gap-3">
+                <span className={`font-mono text-xs mt-0.5 shrink-0 ${
+                  checked && i === correctIdx ? 'text-emerald-300'
+                    : checked && i === selected ? 'text-rose-300'
+                    : 'opacity-60'
+                }`}>
+                  {letter}
+                </span>
+                <span className="text-sm flex-1">{opt.text}</span>
+                {checked && i === correctIdx && <Check size={14} className="text-emerald-300 mt-0.5 shrink-0"/>}
+                {checked && i === selected && i !== correctIdx && <X size={14} className="text-rose-300 mt-0.5 shrink-0"/>}
+              </div>
+              {checked && (
+                <p className="mt-2 text-[12px] text-slate-300/80 leading-relaxed pl-7">
+                  {opt.explanation}
+                </p>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        {!checked ? (
+          <button
+            onClick={() => setChecked(true)}
+            disabled={selected === null}
+            className={`px-4 py-2 rounded-lg border text-sm font-medium transition-all
+              ${selected === null
+                ? 'bg-slate-800/40 border-slate-700 text-slate-500 cursor-not-allowed'
+                : 'bg-amber-500/20 hover:bg-amber-500/30 border-amber-500/50 text-amber-100'}`}
+          >
+            Check answer
+          </button>
+        ) : (
+          <div className="flex items-center gap-3">
+            <span className={`text-sm font-medium flex items-center gap-1.5 ${isCorrect ? 'text-emerald-300' : 'text-rose-300'}`}>
+              {isCorrect ? <Check size={14}/> : <X size={14}/>}
+              {isCorrect ? 'Correct' : 'Not quite — see explanations above'}
+            </span>
+            <button
+              onClick={() => { setChecked(false); setSelected(null); setHint1(false); setHint2(false); }}
+              className="text-[11px] font-mono text-slate-400 hover:text-slate-200 underline underline-offset-2"
+            >
+              try again
+            </button>
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function QuizTab() {
+  return (
+    <div className="space-y-6">
+      <div>
+        <span className="font-mono text-[10px] tracking-[0.3em] text-amber-400/70 uppercase">Practice</span>
+        <h2 className="font-serif text-3xl text-slate-100 mt-1 mb-2 tracking-tight">
+          Self-check questions
+        </h2>
+        <p className="text-slate-300/90 leading-relaxed max-w-2xl">
+          Ten exam-style questions covering the topics in this tutorial. Try each one cold;
+          if you're stuck, expand the hints (the second is more direct than the first).
+          Click <em>Check answer</em> to see whether you got it — and an explanation for
+          every option, not just the correct one.
+        </p>
+      </div>
+      {QUESTIONS.map((q, i) => (
+        <Question key={q.id} q={q} index={i + 1} />
+      ))}
+    </div>
+  );
+}
+
+/* =========================================================
    ROOT
    ========================================================= */
 
@@ -2882,6 +3207,7 @@ const TABS = [
   { id: 'shifted',  label: 'Shifted Windows', icon: Move },
   { id: 'hier',     label: 'Hierarchy',       icon: GitBranch },
   { id: 'compare',  label: 'ViT vs Swin',     icon: Microscope },
+  { id: 'quiz',     label: 'Practice',        icon: HelpCircle },
 ];
 
 export default function App() {
@@ -2900,6 +3226,7 @@ export default function App() {
       case 'shifted': return <ShiftedTab />;
       case 'hier': return <HierarchyTab />;
       case 'compare': return <CompareTab />;
+      case 'quiz': return <QuizTab />;
       default: return <LiveDemoTab />;
     }
   };
