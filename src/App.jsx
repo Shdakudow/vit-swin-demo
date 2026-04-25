@@ -3894,8 +3894,17 @@ function LiveDemoTab() {
   }, [hfToken]);
 
   // Run inference on every image change by calling the HF Inference API.
+  // Endpoint changed mid-2025: legacy api-inference.huggingface.co/models
+  // now 404s; new path is router.huggingface.co/hf-inference/models, which
+  // requires a token (no more anonymous quota).
   useEffect(() => {
     if (!imgSrc) return;
+    if (!hfToken) {
+      setModelStatus('error');
+      setModelMessage('Paste a HuggingFace token above to enable real predictions.');
+      setRealPreds(null);
+      return;
+    }
     let canceled = false;
     setModelStatus('inferring');
     setModelMessage('Calling HuggingFace Inference API…');
@@ -3903,16 +3912,15 @@ function LiveDemoTab() {
 
     (async () => {
       try {
-        // Fetch the image bytes (works for same-origin and uploaded blobs).
         const imgResp = await fetch(imgSrc);
         if (!imgResp.ok) throw new Error(`Could not load image (${imgResp.status})`);
         const blob = await imgResp.blob();
 
         const apiResp = await fetch(
-          'https://api-inference.huggingface.co/models/google/vit-base-patch16-224',
+          'https://router.huggingface.co/hf-inference/models/google/vit-base-patch16-224',
           {
             method: 'POST',
-            headers: hfToken ? { 'Authorization': `Bearer ${hfToken}` } : {},
+            headers: { 'Authorization': `Bearer ${hfToken}` },
             body: blob,
           }
         );
@@ -3922,17 +3930,17 @@ function LiveDemoTab() {
           const txt = await apiResp.text().catch(() => '');
           if (apiResp.status === 401 || apiResp.status === 403) {
             setModelStatus('error');
-            setModelMessage('API requires a HuggingFace token — paste one above.');
+            setModelMessage('Token rejected (401). Generate a new one with "read" permissions.');
             return;
           }
           if (apiResp.status === 429) {
             setModelStatus('error');
-            setModelMessage('Rate limited (anonymous quota). Add a HF token for higher limits.');
+            setModelMessage('Rate limited (429). Free tier has hourly caps — try again later.');
             return;
           }
           if (apiResp.status === 503) {
             setModelStatus('error');
-            setModelMessage('Model is warming up on HF servers (cold start). Try again in ~20 s.');
+            setModelMessage('Model is warming up on HF servers (503). Try again in ~20 s.');
             return;
           }
           throw new Error(`HF API ${apiResp.status}: ${txt.slice(0, 140)}`);
@@ -3942,7 +3950,6 @@ function LiveDemoTab() {
         if (canceled) return;
         if (!Array.isArray(out)) throw new Error('Unexpected API response shape');
 
-        // Clean up ImageNet synonym lists, keep top 5.
         const cleaned = out.slice(0, 5).map(p => {
           const first = String(p.label || '').split(',')[0].trim();
           const label = first ? first[0].toUpperCase() + first.slice(1) : first;
@@ -3954,7 +3961,11 @@ function LiveDemoTab() {
       } catch (err) {
         if (!canceled) {
           setModelStatus('error');
-          setModelMessage(String(err.message || err));
+          // "Failed to fetch" usually means CORS or network — give a hint.
+          const msg = String(err.message || err);
+          setModelMessage(msg.includes('Failed to fetch')
+            ? 'Network/CORS error reaching HF. Double-check the token and that you\'re online.'
+            : msg);
         }
       }
     })();
@@ -3976,15 +3987,16 @@ function LiveDemoTab() {
         </h2>
         <div className="flex items-center gap-2 text-[11px] font-mono">
           <span className="text-slate-400 hidden sm:inline">
-            ViT-Base/16 (ImageNet-1K) · HuggingFace Inference API
+            ViT-Base/16 · HF Inference API · token required →
           </span>
           <input
             type="password"
             value={hfToken}
             onChange={e => setHfToken(e.target.value.trim())}
-            placeholder="hf_… (optional token)"
+            placeholder="hf_… token (required)"
             spellCheck={false}
-            className="w-44 px-2 py-1 rounded bg-slate-900 border border-slate-700 text-amber-200 text-[11px] focus:border-amber-500 focus:outline-none"
+            className={`w-48 px-2 py-1 rounded text-[11px] focus:outline-none border bg-slate-900 text-amber-200
+              ${hfToken ? 'border-amber-500/50' : 'border-rose-500/40 focus:border-rose-400'}`}
             aria-label="HuggingFace API token"
           />
           <a
