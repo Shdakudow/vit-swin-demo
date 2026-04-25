@@ -800,6 +800,11 @@ function AttentionTab() {
     const Wq = randMatrix(D, D, rng);
     const Wk = randMatrix(D, D, rng);
     const Wv = randMatrix(D, D, rng);
+    // Boost projection variance so softmax peaks instead of going uniform
+    // (random init at σ≈0.35 produces dot products too small to peak after /√d).
+    const projBoost = 2.5;
+    for (let i = 0; i < Wq.data.length; i++) Wq.data[i] *= projBoost;
+    for (let i = 0; i < Wk.data.length; i++) Wk.data[i] *= projBoost;
     const Q = matmul(X, Wq);
     const K = matmul(X, Wk);
     const V = matmul(X, Wv);
@@ -1239,11 +1244,21 @@ function MultiHeadTab() {
     c.width = SIZE; c.height = SIZE;
     drawTestImage(c.getContext('2d'), SIZE);
     const X = computePatchFeatures(c, patchSize, D, 7);
+    // Random projections at the default init scale (σ≈0.35) produce
+    // dot products small enough that softmax is near-uniform (every cell
+    // ≈ 1/N). For a teaching visualization we want each head's attention
+    // to actually peak somewhere, so we boost the projection variance by
+    // a factor that compensates for the reduced headDim. Trained models
+    // get this contrast for free during training; we get it by widening
+    // the random init.
+    const projBoost = 2.5 * Math.sqrt(D / headDim);
     const out = [];
     for (let h = 0; h < numHeads; h++) {
       const rng = mulberry32(101 + h * 17);
       const Wq = randMatrix(D, headDim, rng);
       const Wk = randMatrix(D, headDim, rng);
+      for (let i = 0; i < Wq.data.length; i++) Wq.data[i] *= projBoost;
+      for (let i = 0; i < Wk.data.length; i++) Wk.data[i] *= projBoost;
       const Q = matmul(X, Wq);
       const K = matmul(X, Wk);
       const Kt = transpose(K);
