@@ -2346,6 +2346,128 @@ function drawScan(canvas, img, size, patchPx, progress, mode) {
   }
 }
 
+/* Attention matrix view — fixed 8×8 patch grid (independent of scan
+   patchSize) so the visual is stable. Computes pairwise attention from
+   downsampled patch colors; ViT is dense, Swin masks anything outside
+   a 4×4 window block. */
+const MAT_N = 8;
+const MAT_TOTAL = MAT_N * MAT_N;
+const MAT_WIN = 4;
+
+function computeAttention(img) {
+  if (!img) return null;
+  const tmp = document.createElement('canvas');
+  tmp.width = MAT_N;
+  tmp.height = MAT_N;
+  const tctx = tmp.getContext('2d');
+  const w = img.naturalWidth || img.width;
+  const h = img.naturalHeight || img.height;
+  const crop = Math.min(w, h);
+  tctx.drawImage(img, (w - crop) / 2, (h - crop) / 2, crop, crop, 0, 0, MAT_N, MAT_N);
+  const pix = tctx.getImageData(0, 0, MAT_N, MAT_N).data;
+  const feats = [];
+  for (let i = 0; i < MAT_TOTAL; i++) {
+    feats.push([pix[i * 4], pix[i * 4 + 1], pix[i * 4 + 2]]);
+  }
+  function build(modeType) {
+    const A = [];
+    for (let i = 0; i < MAT_TOTAL; i++) {
+      const row = new Float32Array(MAT_TOTAL);
+      const logits = new Float32Array(MAT_TOTAL);
+      let max = -Infinity;
+      const ix = i % MAT_N, iy = (i / MAT_N) | 0;
+      for (let j = 0; j < MAT_TOTAL; j++) {
+        const jx = j % MAT_N, jy = (j / MAT_N) | 0;
+        if (modeType === 'swin' &&
+            ((ix / MAT_WIN) | 0) !== ((jx / MAT_WIN) | 0) ||
+            modeType === 'swin' &&
+            ((iy / MAT_WIN) | 0) !== ((jy / MAT_WIN) | 0)) {
+          logits[j] = -1e9;
+          continue;
+        }
+        let d = 0;
+        for (let k = 0; k < 3; k++) {
+          const diff = feats[i][k] - feats[j][k];
+          d += diff * diff;
+        }
+        const v = -d / 4000;
+        logits[j] = v;
+        if (v > max) max = v;
+      }
+      let sum = 0;
+      for (let j = 0; j < MAT_TOTAL; j++) {
+        if (logits[j] <= -1e8) { row[j] = 0; continue; }
+        row[j] = Math.exp(logits[j] - max);
+        sum += row[j];
+      }
+      if (sum > 0) for (let j = 0; j < MAT_TOTAL; j++) row[j] /= sum;
+      A.push(row);
+    }
+    return A;
+  }
+  return { vit: build('vit'), swin: build('swin') };
+}
+
+function drawMatrix(canvas, A, progress, mode) {
+  if (!canvas || !A) return;
+  const px = 480;
+  canvas.width = px;
+  canvas.height = px;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#0a0e1a';
+  ctx.fillRect(0, 0, px, px);
+  const cell = px / MAT_TOTAL;
+  const seenRows = Math.min(MAT_TOTAL, Math.floor(progress * MAT_TOTAL));
+  const base = mode === 'vit' ? [245, 158, 11] : [20, 184, 166];
+
+  for (let i = 0; i < MAT_TOTAL; i++) {
+    const row = A[i];
+    for (let j = 0; j < MAT_TOTAL; j++) {
+      const v = row[j];
+      let alpha;
+      if (i < seenRows) {
+        const intensity = Math.min(1, v * 14);
+        alpha = 0.06 + intensity * 0.94;
+      } else {
+        alpha = 0.04;
+      }
+      ctx.fillStyle = `rgba(${base[0]}, ${base[1]}, ${base[2]}, ${alpha})`;
+      ctx.fillRect(j * cell, i * cell, cell + 0.5, cell + 0.5);
+    }
+  }
+
+  // patch grid (every MAT_N cells)
+  ctx.strokeStyle = `rgba(${base[0]}, ${base[1]}, ${base[2]}, 0.12)`;
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= MAT_TOTAL; i += MAT_N) {
+    const p = i * cell;
+    ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, px); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(px, p); ctx.stroke();
+  }
+
+  // Swin: show the 4×4-patch window blocks (each block = MAT_WIN×MAT_N rows in the flattened matrix)
+  if (mode === 'swin') {
+    ctx.strokeStyle = `rgba(${base[0]}, ${base[1]}, ${base[2]}, 0.55)`;
+    ctx.lineWidth = 2;
+    const wins = Math.ceil(MAT_N / MAT_WIN);
+    for (let wy = 0; wy < wins; wy++) {
+      for (let wx = 0; wx < wins; wx++) {
+        const x = wx * MAT_WIN * MAT_N * cell;
+        const y = wy * MAT_WIN * MAT_N * cell;
+        const wpx = MAT_WIN * MAT_N * cell;
+        ctx.strokeRect(x, y, wpx, wpx);
+      }
+    }
+  }
+
+  // current row highlight
+  if (seenRows > 0) {
+    ctx.strokeStyle = 'rgba(245, 158, 11, 1)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(0, (seenRows - 1) * cell, px, cell);
+  }
+}
+
 function PredictionBars({ preds, accent }) {
   const max = (preds && preds[0]?.score) || 1;
   return (
@@ -2378,11 +2500,11 @@ function LiveDemoTab() {
   const [galleryId, setGalleryId] = useState('cat');
   const [customSrc, setCustomSrc] = useState(null);
   const imgSrc = customSrc || GALLERY.find(g => g.id === galleryId)?.src;
-  const imgName = customSrc ? 'your image' : (GALLERY.find(g => g.id === galleryId)?.name || 'image');
 
   const [patchSize, setPatchSize] = useState(36);
   const [progress, setProgress] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState('Slow');
   const [mode, setMode] = useState('simulated');
 
   const [realPreds, setRealPreds] = useState(null);
@@ -2393,7 +2515,10 @@ function LiveDemoTab() {
 
   const vitRef = useRef();
   const swinRef = useRef();
+  const vitMatRef = useRef();
+  const swinMatRef = useRef();
   const imgRef = useRef();
+  const attnRef = useRef(null);
 
   const reset = useCallback(() => { setProgress(0); setPlaying(false); }, []);
 
@@ -2402,8 +2527,11 @@ function LiveDemoTab() {
     img.crossOrigin = 'anonymous';
     img.onload = () => {
       imgRef.current = img;
+      attnRef.current = computeAttention(img);
       drawScan(vitRef.current, img, 360, patchSize, progress, 'vit');
       drawScan(swinRef.current, img, 360, patchSize, progress, 'swin');
+      drawMatrix(vitMatRef.current, attnRef.current?.vit, progress, 'vit');
+      drawMatrix(swinMatRef.current, attnRef.current?.swin, progress, 'swin');
     };
     img.src = imgSrc;
     setRealPreds(null);
@@ -2415,19 +2543,23 @@ function LiveDemoTab() {
     if (!imgRef.current) return;
     drawScan(vitRef.current, imgRef.current, 360, patchSize, progress, 'vit');
     drawScan(swinRef.current, imgRef.current, 360, patchSize, progress, 'swin');
+    drawMatrix(vitMatRef.current, attnRef.current?.vit, progress, 'vit');
+    drawMatrix(swinMatRef.current, attnRef.current?.swin, progress, 'swin');
   }, [patchSize, progress]);
 
   useEffect(() => {
     if (!playing) return;
+    const stepBySpeed = { Slow: 0.0025, Medium: 0.005, Fast: 0.0125 };
+    const step = stepBySpeed[speed] ?? 0.005;
     const id = setInterval(() => {
       setProgress(p => {
-        const next = p + 0.012;
+        const next = p + step;
         if (next >= 1) { setPlaying(false); return 1; }
         return next;
       });
     }, 50);
     return () => clearInterval(id);
-  }, [playing]);
+  }, [playing, speed]);
 
   const baseSim = customSrc ? SIM_FALLBACK : (SIM_PREDS[galleryId] || SIM_FALLBACK);
   const animatedSim = baseSim.map(p => ({
@@ -2496,10 +2628,7 @@ function LiveDemoTab() {
               className={`relative rounded-lg overflow-hidden border-2 aspect-square transition-all
                 ${!customSrc && galleryId === g.id ? 'border-amber-400 shadow-lg shadow-amber-500/10' : 'border-slate-700 hover:border-slate-500'}`}
             >
-              <img src={g.src} alt={g.name} className="w-full h-full object-cover" />
-              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/95 to-transparent px-2 py-1.5 text-left">
-                <span className="text-[11px] font-mono text-slate-100">{g.name}</span>
-              </div>
+              <img src={g.src} alt="" className="w-full h-full object-cover" />
             </button>
           ))}
           <label className={`relative rounded-lg overflow-hidden border-2 transition-all flex items-center justify-center cursor-pointer aspect-square
@@ -2517,12 +2646,7 @@ function LiveDemoTab() {
               }}
             />
             {customSrc ? (
-              <>
-                <img src={customSrc} alt="custom" className="w-full h-full object-cover" />
-                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/95 to-transparent px-2 py-1.5 text-left">
-                  <span className="text-[11px] font-mono text-slate-100">Your image</span>
-                </div>
-              </>
+              <img src={customSrc} alt="" className="w-full h-full object-cover" />
             ) : (
               <div className="text-center">
                 <Upload size={20} className="mx-auto mb-1 text-slate-400" />
@@ -2565,37 +2689,97 @@ function LiveDemoTab() {
       </div>
 
       <Card className="p-5">
-        <div className="flex flex-wrap items-end gap-5">
-          <div className="flex gap-2">
+        <div className="flex items-center gap-2 mb-1">
+          <Network size={16} className="text-slate-300"/>
+          <h3 className="font-serif text-base text-slate-100">Attention Matrices</h3>
+          <span className="text-[11px] font-mono text-slate-500">— what each patch attends to</span>
+        </div>
+        <p className="text-[12px] text-slate-400 mb-4 leading-relaxed">
+          Each row is a query patch; each column is a key patch. Brightness = attention weight.
+          Rows fill in as the scan progresses. ViT's matrix is dense — every patch can talk
+          to every other. Swin's is <em>block-diagonal</em> — only patches inside the same
+          window can communicate, which is why it's so much cheaper.
+        </p>
+        <div className="grid sm:grid-cols-2 gap-4">
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <Tag color="amber">ViT</Tag>
+              <span className="text-[11px] font-mono text-slate-500">dense · 64×64</span>
+            </div>
+            <canvas ref={vitMatRef} className="w-full rounded bg-slate-950 aspect-square" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <Tag color="teal">Swin</Tag>
+              <span className="text-[11px] font-mono text-slate-500">block-diagonal · 4 windows of 16</span>
+            </div>
+            <canvas ref={swinMatRef} className="w-full rounded bg-slate-950 aspect-square" />
+          </div>
+        </div>
+      </Card>
+
+      <Card className="p-5">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
+          <div className="flex gap-2 items-end">
             <button
               onClick={() => { if (progress >= 1) setProgress(0); setPlaying(p => !p); }}
               className="px-3.5 py-2 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-200 flex items-center gap-1.5 text-sm font-medium transition-all"
             >
               {playing ? <Pause size={14}/> : <Play size={14}/>}
-              {playing ? 'Pause' : (progress >= 1 ? 'Replay scan' : 'Play scan')}
+              {playing ? 'Pause' : (progress >= 1 ? 'Replay' : 'Play scan')}
             </button>
             <button
               onClick={reset}
-              className="px-3.5 py-2 rounded-lg bg-slate-800/60 hover:bg-slate-800 border border-slate-700 text-slate-300 flex items-center gap-1.5 text-sm transition-all"
+              className="px-3 py-2 rounded-lg bg-slate-800/60 hover:bg-slate-800 border border-slate-700 text-slate-300 flex items-center gap-1.5 text-sm transition-all"
             >
-              <RotateCcw size={14}/> Reset
+              <RotateCcw size={14}/>
             </button>
           </div>
-          <div className="flex-1 min-w-[200px]">
-            <Slider
-              label="Scan Progress"
-              value={Math.round(progress * 100)}
-              min={0} max={100} suffix="%"
-              onChange={v => { setPlaying(false); setProgress(v / 100); }}
-            />
-          </div>
-          <div className="flex-1 min-w-[200px]">
-            <Slider
-              label="Patch Size (px)"
-              value={patchSize}
-              options={[24, 36, 60]}
-              onChange={v => { setPatchSize(v); reset(); }}
-            />
+          <Slider
+            label="Scan Progress"
+            value={Math.round(progress * 100)}
+            min={0} max={100} suffix="%"
+            onChange={v => { setPlaying(false); setProgress(v / 100); }}
+          />
+          <Slider
+            label="Scan Speed"
+            value={speed}
+            options={['Slow', 'Medium', 'Fast']}
+            onChange={setSpeed}
+          />
+          <div>
+            <div className="flex items-baseline justify-between mb-1.5">
+              <label className="text-[12px] font-mono text-slate-400 uppercase tracking-wider">Patch Size (px)</label>
+              <span className="font-mono text-amber-300 text-sm">{patchSize}</span>
+            </div>
+            <div className="flex gap-1 items-stretch">
+              {[16, 32, 48, 64].map(opt => (
+                <button
+                  key={opt}
+                  onClick={() => { setPatchSize(opt); reset(); }}
+                  className={`flex-1 px-2 py-1.5 rounded text-xs font-mono border transition-all
+                    ${patchSize === opt
+                      ? 'bg-amber-500/20 border-amber-500/50 text-amber-200'
+                      : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-600'}`}
+                >
+                  {opt}
+                </button>
+              ))}
+              <input
+                type="number"
+                min={8}
+                max={120}
+                step={1}
+                value={patchSize}
+                onChange={e => {
+                  const v = Math.max(8, Math.min(120, Number(e.target.value) || 8));
+                  setPatchSize(v);
+                  reset();
+                }}
+                className="w-14 px-2 py-1.5 rounded text-xs font-mono bg-slate-900 border border-slate-700 text-amber-200 focus:border-amber-500 focus:outline-none"
+                aria-label="Custom patch size"
+              />
+            </div>
           </div>
         </div>
       </Card>
@@ -2605,7 +2789,6 @@ function LiveDemoTab() {
           <div className="flex items-center gap-2">
             <Brain size={18} className="text-amber-300"/>
             <h3 className="font-serif text-lg text-slate-100">Predictions</h3>
-            <span className="text-[11px] font-mono text-slate-500">on {imgName}</span>
           </div>
           <div className="flex gap-1 bg-slate-800/60 rounded-lg p-1 border border-slate-700/60">
             <button
