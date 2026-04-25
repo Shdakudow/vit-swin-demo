@@ -819,6 +819,11 @@ function AttentionTab() {
     const ctx = c.getContext('2d');
     ctx.clearRect(0, 0, SIZE, SIZE);
 
+    // Guard against stale data (matrices recomputed asynchronously after a
+    // patch-size change) and out-of-range selections.
+    const dataValid = (M) => M && M.data && M.data.length === N * N;
+    const selValid = selectedPatch !== null && selectedPatch >= 0 && selectedPatch < N;
+
     const drawNum = (text, x, y) => {
       const fs = Math.max(9, Math.floor(patchSize / 4.2));
       ctx.font = `${fs}px ui-monospace, Menlo, monospace`;
@@ -833,20 +838,20 @@ function AttentionTab() {
 
     // Find top-K patches for the aggregate step
     let topSet = null;
-    if (step === 3 && selectedPatch !== null && attn) {
+    if (step === 3 && selValid && dataValid(attn)) {
       const indexed = [];
       for (let i = 0; i < N; i++) indexed.push({ i, w: attn.data[selectedPatch * N + i] });
       indexed.sort((a, b) => b.w - a.w);
       topSet = new Set(indexed.slice(0, Math.min(5, N)).map(o => o.i));
     }
 
-    if (selectedPatch !== null && (step === 1 || step === 2 || step === 3 || step === 4)) {
+    if (selValid && (step === 1 || step === 2 || step === 3 || step === 4)) {
       // Find the value range we need to map to color/label.
       let M = null;
       if (step === 1) M = scores;     // raw scaled score, signed
       else M = attn;                   // softmax probability, 0..1
 
-      if (M) {
+      if (dataValid(M)) {
         let maxAbs = 1e-9;
         if (step === 1) {
           for (let i = 0; i < N; i++) {
@@ -883,8 +888,8 @@ function AttentionTab() {
               ctx.fillRect(cx, cy, patchSize, patchSize);
             }
 
-            // Numeric label — only when patches are large enough.
-            if (patchSize >= 24) {
+            // Numeric label — only when patches are large enough and value is finite.
+            if (patchSize >= 24 && Number.isFinite(v)) {
               let label = '';
               if (step === 1) {
                 label = (v >= 0 ? '+' : '') + v.toFixed(1);
@@ -924,8 +929,8 @@ function AttentionTab() {
     const rect = e.currentTarget.getBoundingClientRect();
     const x = ((e.clientX - rect.left) / rect.width) * SIZE;
     const y = ((e.clientY - rect.top) / rect.height) * SIZE;
-    const px = Math.floor(x / patchSize);
-    const py = Math.floor(y / patchSize);
+    const px = Math.min(grid - 1, Math.max(0, Math.floor(x / patchSize)));
+    const py = Math.min(grid - 1, Math.max(0, Math.floor(y / patchSize)));
     setSelectedPatch(py * grid + px);
   };
 
@@ -981,7 +986,12 @@ function AttentionTab() {
             <canvas ref={overlayRef} className="absolute inset-0 w-full h-full pointer-events-none" />
           </div>
           <div className="mt-4 space-y-3">
-            <Slider label="Patch size" value={patchSize} options={[16, 32, 64]} onChange={setPatchSize} />
+            <Slider
+              label="Patch size"
+              value={patchSize}
+              options={[16, 32, 64]}
+              onChange={(v) => { setPatchSize(v); setSelectedPatch(null); }}
+            />
             <Slider label="Random seed (W_Q, W_K, W_V)" value={seed} min={1} max={50} onChange={setSeed} />
           </div>
           <div className="mt-3 text-[11px] text-slate-400 leading-relaxed italic min-h-[2.5em]">
@@ -1090,11 +1100,14 @@ function MatHeat({ label, M, color }) {
    same orange blob across steps. Cells contain numbers when the
    grid is small enough to read them. */
 function StepMatrix({ scores, attn, N, selectedPatch, step, onCellClick }) {
-  if (step < 1 || !scores || !attn) {
+  // Guard against either matrix being absent OR sized for a stale grid
+  // (which can happen for one render after patchSize changes).
+  const sized = (M) => M && M.data && M.data.length === N * N;
+  if (step < 1 || !sized(scores) || !sized(attn)) {
     return (
       <div className="aspect-square w-full rounded border border-slate-800/60 bg-slate-950/40 flex items-center justify-center text-center px-4">
         <span className="text-slate-500 text-[12px] font-mono leading-relaxed">
-          Move to Step 2 — the matrix is computed by Q·Kᵀ.
+          {step < 1 ? 'Move to Step 2 — the matrix is computed by Q·Kᵀ.' : 'computing…'}
         </span>
       </div>
     );
@@ -1140,7 +1153,7 @@ function StepMatrix({ scores, attn, N, selectedPatch, step, onCellClick }) {
           bg = v >= 0
             ? `rgba(245, 158, 11, ${0.05 + t * 0.85})`
             : `rgba(96, 165, 250, ${0.05 + t * 0.85})`;
-          if (showNumbers) label = (v >= 0 ? '+' : '') + v.toFixed(1);
+          if (showNumbers && Number.isFinite(v)) label = (v >= 0 ? '+' : '') + v.toFixed(1);
         } else if (step === 3) {
           const isTop = topMask[idx] === 1;
           if (isTop) {
@@ -1261,7 +1274,9 @@ function MultiHeadTab() {
               const rect = e.currentTarget.getBoundingClientRect();
               const x = ((e.clientX - rect.left) / rect.width) * SIZE;
               const y = ((e.clientY - rect.top) / rect.height) * SIZE;
-              setSelectedPatch(Math.floor(y / patchSize) * grid + Math.floor(x / patchSize));
+              const px = Math.min(grid - 1, Math.max(0, Math.floor(x / patchSize)));
+              const py = Math.min(grid - 1, Math.max(0, Math.floor(y / patchSize)));
+              setSelectedPatch(py * grid + px);
             }}
           >
             <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
