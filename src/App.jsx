@@ -777,7 +777,7 @@ function SimHeatmap({ data, N }) {
    ========================================================= */
 
 function AttentionTab() {
-  const [patchSize, setPatchSize] = useState(32);
+  const [patchSize, setPatchSize] = useState(64);
   const [selectedPatch, setSelectedPatch] = useState(null);
   const [seed, setSeed] = useState(7);
   const [step, setStep] = useState(4);
@@ -1012,17 +1012,33 @@ function AttentionTab() {
               </div>
             </Card>
           )}
-          {step >= 1 && attn && (
-            <Card className="p-5">
-              <div className="text-sm text-slate-200 mb-3">
-                Attention matrix <Eq>A ∈ ℝ^(N×N)</Eq> · row i = how much patch i attends to every patch.
+          <Card className="p-5">
+            <div className="flex items-baseline justify-between gap-3 mb-3 flex-wrap">
+              <div className="text-sm text-slate-200">
+                {step <= 0 && <>Attention matrix <Eq>A ∈ ℝ^(N×N)</Eq> · not yet computed</>}
+                {step === 1 && <>Raw scores <Eq>Q·Kᵀ / √d</Eq> · signed values, before softmax</>}
+                {step === 2 && <>Softmax weights <Eq>A</Eq> · each row sums to 100%</>}
+                {step === 3 && <>Aggregate · top-3 contributors per row highlighted</>}
+                {step === 4 && <>Inspect · click any row to set that as the query</>}
               </div>
-              <AttentionMatrix attn={attn} N={N} highlight={selectedPatch} onCellClick={setSelectedPatch} />
-              <div className="mt-3 text-[11px] text-slate-500 italic">
-                Each row sums to 1. Click a cell to set that row as the query.
-              </div>
-            </Card>
-          )}
+              <span className="font-mono text-[10px] text-slate-500">N = {N}</span>
+            </div>
+            <StepMatrix
+              scores={scores}
+              attn={attn}
+              N={N}
+              selectedPatch={selectedPatch}
+              step={step}
+              onCellClick={setSelectedPatch}
+            />
+            <div className="mt-3 text-[11px] text-slate-500 italic leading-relaxed">
+              {step === 1 && 'Amber = positive, blue = negative. These are not probabilities yet — softmax hasn\'t been applied.'}
+              {step === 2 && 'Each row is a probability distribution: how patch i splits its attention over all keys j.'}
+              {step === 3 && 'Most of the attention mass usually concentrates on a handful of patches; the output is a weighted sum of just those.'}
+              {step === 4 && 'Click a row to focus the canvas overlay on that query patch.'}
+              {step <= 0 && 'Walk the steps above to build the matrix.'}
+            </div>
+          </Card>
           {step >= 4 && selectedPatch !== null && attn && (
             <Card className="p-5">
               <div className="text-sm text-slate-200 mb-3">
@@ -1069,50 +1085,96 @@ function MatHeat({ label, M, color }) {
   );
 }
 
-function AttentionMatrix({ attn, N, highlight, onCellClick }) {
-  const ref = useRef(null);
-  useEffect(() => {
-    const c = ref.current; if (!c) return;
-    c.width = N; c.height = N;
-    const ctx = c.getContext('2d');
-    const img = ctx.createImageData(N, N);
-    let mx = 0;
-    for (let i = 0; i < attn.data.length; i++) mx = Math.max(mx, attn.data[i]);
-    for (let i = 0; i < attn.data.length; i++) {
-      const t = Math.pow(attn.data[i] / mx, 0.6);
-      img.data[i * 4] = Math.floor(245 * t);
-      img.data[i * 4 + 1] = Math.floor(158 * t);
-      img.data[i * 4 + 2] = Math.floor(11 * t);
-      img.data[i * 4 + 3] = 255;
-    }
-    ctx.putImageData(img, 0, 0);
-  }, [attn, N]);
-  const handleClick = (e) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const row = Math.floor(((e.clientY - rect.top) / rect.height) * N);
-    onCellClick(row);
-  };
-  return (
-    <div className="relative">
-      <canvas
-        ref={ref}
-        className="w-full aspect-square rounded border border-slate-800 cursor-pointer"
-        style={{ imageRendering: 'pixelated' }}
-        onClick={handleClick}
-      />
-      {highlight !== null && (
-        <div
-          className="absolute pointer-events-none border-2 border-rose-400"
-          style={{
-            left: '0%', width: '100%',
-            top: `${(highlight / N) * 100}%`,
-            height: `${100 / N}%`,
-          }}
-        />
-      )}
-      <div className="flex justify-between text-[10px] font-mono text-slate-500 mt-1">
-        <span>← keys (j) →</span>
+/* StepMatrix — step-aware HTML grid that shows raw scores, then
+   softmax, then top-K — so the right panel doesn't look like the
+   same orange blob across steps. Cells contain numbers when the
+   grid is small enough to read them. */
+function StepMatrix({ scores, attn, N, selectedPatch, step, onCellClick }) {
+  if (step < 1 || !scores || !attn) {
+    return (
+      <div className="aspect-square w-full rounded border border-slate-800/60 bg-slate-950/40 flex items-center justify-center text-center px-4">
+        <span className="text-slate-500 text-[12px] font-mono leading-relaxed">
+          Move to Step 2 — the matrix is computed by Q·Kᵀ.
+        </span>
       </div>
+    );
+  }
+
+  const M = step === 1 ? scores : attn;
+
+  let topMask = null;
+  const topK = 3;
+  if (step === 3) {
+    topMask = new Uint8Array(N * N);
+    for (let i = 0; i < N; i++) {
+      const row = [];
+      for (let j = 0; j < N; j++) row.push({ j, w: attn.data[i * N + j] });
+      row.sort((a, b) => b.w - a.w);
+      for (let k = 0; k < Math.min(topK, N); k++) topMask[i * N + row[k].j] = 1;
+    }
+  }
+
+  let maxAbs = 1e-9;
+  for (let i = 0; i < M.data.length; i++) {
+    const a = Math.abs(M.data[i]);
+    if (a > maxAbs) maxAbs = a;
+  }
+
+  const showNumbers = N <= 16;
+  const fontPx = N <= 4 ? 14 : N <= 9 ? 11 : N <= 16 ? 9 : 7;
+
+  return (
+    <div
+      className="grid gap-px p-1 rounded bg-slate-900/80 border border-slate-800 w-full"
+      style={{ gridTemplateColumns: `repeat(${N}, minmax(0, 1fr))`, aspectRatio: '1' }}
+    >
+      {Array.from({ length: N * N }, (_, idx) => {
+        const i = (idx / N) | 0;
+        const j = idx % N;
+        const v = M.data[idx];
+        const isSelectedRow = selectedPatch === i;
+        let bg, label = '';
+
+        if (step === 1) {
+          const t = Math.min(1, Math.abs(v) / maxAbs);
+          bg = v >= 0
+            ? `rgba(245, 158, 11, ${0.05 + t * 0.85})`
+            : `rgba(96, 165, 250, ${0.05 + t * 0.85})`;
+          if (showNumbers) label = (v >= 0 ? '+' : '') + v.toFixed(1);
+        } else if (step === 3) {
+          const isTop = topMask[idx] === 1;
+          if (isTop) {
+            const t = Math.pow(v * N, 0.5);
+            bg = `rgba(245, 158, 11, ${Math.min(0.95, t * 0.95)})`;
+            if (showNumbers && v * 100 >= 1) label = (v * 100).toFixed(0) + '%';
+          } else {
+            bg = `rgba(245, 158, 11, 0.04)`;
+          }
+        } else {
+          const t = Math.pow(v * N, 0.5);
+          bg = `rgba(245, 158, 11, ${Math.min(0.92, t * 0.92)})`;
+          if (showNumbers && v * 100 >= 1) label = (v * 100).toFixed(0);
+        }
+
+        return (
+          <button
+            key={idx}
+            onClick={() => onCellClick && onCellClick(i)}
+            className={`flex items-center justify-center font-mono leading-none transition-colors p-0
+              ${isSelectedRow ? 'ring-1 ring-rose-400 ring-inset' : ''}`}
+            style={{
+              background: bg,
+              fontSize: `${fontPx}px`,
+              color: 'white',
+              textShadow: '0 0 2px rgba(0,0,0,0.85)',
+              aspectRatio: '1',
+            }}
+            title={`row ${i}, col ${j}: ${v.toFixed(4)}`}
+          >
+            {label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -1140,13 +1202,13 @@ function TopAttended({ attn, N, query, grid, patchSize }) {
 
 function MultiHeadTab() {
   const [numHeads, setNumHeads] = useState(4);
-  const [selectedPatch, setSelectedPatch] = useState(28);
+  const [selectedPatch, setSelectedPatch] = useState(5);
   const [activeHead, setActiveHead] = useState(0);
   const canvasRef = useRef(null);
   const SIZE = 256;
-  const patchSize = 32;
-  const grid = SIZE / patchSize; // 8
-  const N = grid * grid; // 64
+  const patchSize = 64;
+  const grid = SIZE / patchSize; // 4
+  const N = grid * grid; // 16
   const D = 32;
   const headDim = D / numHeads;
 
@@ -1329,6 +1391,7 @@ function HeadOverlay({ attn, N, grid, patchSize, query, size }) {
 
 function HeadMini({ attn, N, grid, query }) {
   if (!attn) return <div className="w-full aspect-square rounded bg-slate-800/50" />;
+  const fontPx = grid <= 4 ? 13 : grid <= 6 ? 10 : grid <= 8 ? 8 : 7;
   return (
     <div
       className="grid gap-px bg-slate-900 p-0.5 rounded aspect-square w-full"
@@ -1342,11 +1405,12 @@ function HeadMini({ attn, N, grid, query }) {
         return (
           <div
             key={i}
-            className={`flex items-center justify-center font-mono text-[7px] leading-none text-amber-50/95
+            className={`flex items-center justify-center font-mono leading-none text-amber-50/95
               ${isQuery ? 'ring-1 ring-rose-400 ring-inset' : ''}`}
             style={{
               background: `rgba(245, 158, 11, ${Math.min(0.92, t * 0.92)})`,
               textShadow: '0 0 2px rgba(0,0,0,0.85)',
+              fontSize: `${fontPx}px`,
             }}
             title={`patch ${i}: ${(a * 100).toFixed(2)}%`}
           >
