@@ -141,6 +141,57 @@ function drawTestImage(ctx, size, variant = 0) {
   }
 }
 
+/* Pair-demo image: deliberately laid out so the Self-Attention demo
+   has obvious "answers". Two pairs of objects on a 5×5 grid:
+       red square  ┐                          ┌ blue circle
+                   │                          │
+                   │   (background)           │
+                   │                          │
+       blue circle ┘                          └ red square
+   Diagonal twins share color — a query patch on a red square should
+   attend strongly to the OTHER red square, and similarly for the
+   blue circles. Designed to align with patchSize=48 / SIZE=240. */
+function drawPairsDemoImage(ctx, size) {
+  const bg = ctx.createLinearGradient(0, 0, 0, size);
+  bg.addColorStop(0, '#1e293b');
+  bg.addColorStop(1, '#0f172a');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, size, size);
+
+  const cx1 = size * 0.22, cy1 = size * 0.22;
+  const cx2 = size * 0.78, cy2 = size * 0.22;
+  const cx3 = size * 0.22, cy3 = size * 0.78;
+  const cx4 = size * 0.78, cy4 = size * 0.78;
+  const r = size * 0.11;
+
+  // Pair A — red squares (top-left & bottom-right, diagonal twins)
+  ctx.fillStyle = '#ef4444';
+  ctx.fillRect(cx1 - r, cy1 - r, r * 2, r * 2);
+  ctx.fillRect(cx4 - r, cy4 - r, r * 2, r * 2);
+
+  // Pair B — blue circles (top-right & bottom-left, diagonal twins)
+  ctx.fillStyle = '#3b82f6';
+  ctx.beginPath(); ctx.arc(cx2, cy2, r, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(cx3, cy3, r, 0, Math.PI * 2); ctx.fill();
+
+  // small reference dot in the center to break symmetry visually
+  ctx.fillStyle = '#fbbf24';
+  ctx.beginPath();
+  ctx.arc(size * 0.5, size * 0.5, size * 0.025, 0, Math.PI * 2);
+  ctx.fill();
+
+  // very subtle noise
+  const img = ctx.getImageData(0, 0, size, size);
+  const rng = mulberry32(11);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const n = (rng() - 0.5) * 6;
+    img.data[i] = Math.max(0, Math.min(255, img.data[i] + n));
+    img.data[i + 1] = Math.max(0, Math.min(255, img.data[i + 1] + n));
+    img.data[i + 2] = Math.max(0, Math.min(255, img.data[i + 2] + n));
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
 /* =========================================================
    Patch features: average RGB of each patch, projected to
    a small embedding dim. We use these to drive plausible
@@ -780,7 +831,7 @@ function AttentionTab() {
   const [patchSize, setPatchSize] = useState(48);
   const [selectedPatch, setSelectedPatch] = useState(null);
   const [seed, setSeed] = useState(7);
-  const [step, setStep] = useState(4);
+  const [step, setStep] = useState(0);
   const canvasRef = useRef(null);
   const overlayRef = useRef(null);
   const SIZE = 240; // chosen so 30 / 48 / 60 px patches all divide cleanly
@@ -794,7 +845,7 @@ function AttentionTab() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     canvas.width = SIZE; canvas.height = SIZE;
-    drawTestImage(canvas.getContext('2d'), SIZE);
+    drawPairsDemoImage(canvas.getContext('2d'), SIZE);
     const X = computePatchFeatures(canvas, patchSize, D, seed);
     const rng = mulberry32(seed);
     const Wq = randMatrix(D, D, rng);
@@ -961,6 +1012,25 @@ function AttentionTab() {
         </div>
       </Section>
 
+      {/* How to use — clear three-step instruction so the demo isn't a guessing game */}
+      <Card className="p-4 bg-amber-500/[0.04] border-amber-500/30">
+        <div className="text-[11px] font-mono tracking-[0.2em] text-amber-400/80 uppercase mb-2">How to use this demo</div>
+        <ol className="grid sm:grid-cols-3 gap-3 text-[13px] text-slate-200">
+          <li className="flex gap-2">
+            <span className="font-mono text-amber-300 shrink-0">1.</span>
+            <span><span className="text-amber-300">Click any patch</span> on the image to set it as the <em>query</em> — the patch you're asking "what should I look at?".</span>
+          </li>
+          <li className="flex gap-2">
+            <span className="font-mono text-amber-300 shrink-0">2.</span>
+            <span>Step through buttons <strong>1 → 5</strong> below to walk the math: project, score, softmax, aggregate.</span>
+          </li>
+          <li className="flex gap-2">
+            <span className="font-mono text-amber-300 shrink-0">3.</span>
+            <span>The image has two pairs of identical objects (red squares, blue circles). Watch the model find them.</span>
+          </li>
+        </ol>
+      </Card>
+
       <div className="flex gap-2 mb-2 overflow-x-auto pb-2">
         {steps.map(s => (
           <button
@@ -979,40 +1049,62 @@ function AttentionTab() {
       </div>
 
       <div className="grid lg:grid-cols-[auto_1fr] gap-6">
-        <Card className="p-5">
-          <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-3">
-            {selectedPatch !== null ? `Query: patch #${selectedPatch}` : 'Click a patch to set the query'}
-          </div>
-          <div
-            className="relative w-[240px] h-[240px] rounded-lg overflow-hidden ring-1 ring-slate-700 cursor-crosshair"
-            onClick={handleClick}
-          >
-            <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
-            <canvas ref={overlayRef} className="absolute inset-0 w-full h-full pointer-events-none" />
-          </div>
-          <div className="mt-4 space-y-3">
-            <Slider
-              label="Patch size (px)"
-              value={patchSize}
-              options={[30, 48, 60]}
-              onChange={(v) => { setPatchSize(v); setSelectedPatch(null); }}
-            />
-            <Slider label="Random seed (W_Q, W_K, W_V)" value={seed} min={1} max={50} onChange={setSeed} />
-          </div>
-          <div className="mt-3 text-[11px] text-slate-400 leading-relaxed italic min-h-[2.5em]">
-            {selectedPatch === null
-              ? 'Click any patch to set it as the query, then walk the steps above.'
-              : step === 0
-                ? 'Step 1 · Project — Q, K, V matrices are shown on the right (computed from this patch and every other).'
-                : step === 1
-                  ? <>Step 2 · Score — numbers are <span className="text-amber-300">raw</span> similarity scores <Eq>Q·Kᵀ/√d</Eq>. Amber = positive, blue = negative. They are <em>not</em> probabilities yet.</>
-                  : step === 2
-                    ? <>Step 3 · Softmax — numbers are now probabilities; they sum to <span className="text-amber-300">100%</span> across all patches.</>
-                    : step === 3
-                      ? <>Step 4 · Aggregate — only the top-5 contributing patches stay bright. The output for the query is a weighted blend of <em>their</em> values.</>
-                      : <>Inspect — click any patch on the image or in the matrix on the right to set the query.</>}
-          </div>
-        </Card>
+        <div className="space-y-4">
+          <Card className="p-5">
+            <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-3">
+              {selectedPatch !== null
+                ? <>Query: patch <span className="text-amber-300">#{selectedPatch}</span></>
+                : <span className="text-amber-300 animate-pulse">↓ Click a patch below to start ↓</span>}
+            </div>
+            <div
+              className={`relative w-[240px] h-[240px] rounded-lg overflow-hidden cursor-crosshair transition-all
+                ${selectedPatch === null
+                  ? 'ring-2 ring-amber-400/70 shadow-lg shadow-amber-500/20'
+                  : 'ring-1 ring-slate-700'}`}
+              onClick={handleClick}
+            >
+              <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
+              <canvas ref={overlayRef} className="absolute inset-0 w-full h-full pointer-events-none" />
+            </div>
+            <div className="mt-4 space-y-3">
+              <Slider
+                label="Patch size (px)"
+                value={patchSize}
+                options={[30, 48, 60]}
+                onChange={(v) => { setPatchSize(v); setSelectedPatch(null); }}
+              />
+              <Slider label="Random seed (W_Q, W_K, W_V)" value={seed} min={1} max={50} onChange={setSeed} />
+            </div>
+            <div className="mt-3 text-[12px] text-slate-300 leading-relaxed min-h-[2.5em]">
+              {selectedPatch === null
+                ? <span className="text-amber-200/80">Pick a patch — try one of the red squares or blue circles for the cleanest result.</span>
+                : step === 0
+                  ? <>Step 1 · <span className="text-amber-300">Project</span> — every patch produces three vectors: Q (query), K (key), V (value). The matrices on the right show all three.</>
+                  : step === 1
+                    ? <>Step 2 · <span className="text-amber-300">Score</span> — your query's dot product with every key. Amber = positive (similar), blue = negative (dissimilar). <em>Not</em> a probability yet.</>
+                    : step === 2
+                      ? <>Step 3 · <span className="text-amber-300">Softmax</span> — scores normalised so they sum to 100%. The peaks are where attention concentrates.</>
+                      : step === 3
+                        ? <>Step 4 · <span className="text-amber-300">Aggregate</span> — only the top-5 contributing patches stay bright. The output for your query is a weighted blend of <em>their</em> values.</>
+                        : <>Step 5 · <span className="text-amber-300">Inspect</span> — try other patches. The model should pair red↔red and blue↔blue.</>}
+            </div>
+          </Card>
+
+          {/* Top-attended patches — pulled into the LEFT column so it's visible
+              right next to the image, even when the matrix card is tall. */}
+          {selectedPatch !== null && attn && (
+            <Card className="p-5">
+              <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-3">
+                Top patches that query #{selectedPatch} attends to
+              </div>
+              <TopAttended attn={attn} N={N} query={selectedPatch} grid={grid} patchSize={patchSize} />
+              <div className="text-[11px] text-slate-400 italic mt-3 leading-relaxed">
+                If your query was on a red square, you should see the OTHER red square near the top of this list.
+                That's "patches that look alike attend to each other".
+              </div>
+            </Card>
+          )}
+        </div>
 
         <div className="space-y-4">
           {step === 0 && Q && (
@@ -1054,14 +1146,6 @@ function AttentionTab() {
               {step <= 0 && 'Walk the steps above to build the matrix.'}
             </div>
           </Card>
-          {step >= 4 && selectedPatch !== null && attn && (
-            <Card className="p-5">
-              <div className="text-sm text-slate-200 mb-3">
-                Top-attended patches for query #{selectedPatch}
-              </div>
-              <TopAttended attn={attn} N={N} query={selectedPatch} grid={grid} patchSize={patchSize} />
-            </Card>
-          )}
         </div>
       </div>
     </div>
@@ -2978,7 +3062,7 @@ function LiveDemoTab() {
       </Card>
 
       <Card className="p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
           <div className="flex items-center gap-2">
             <Brain size={18} className="text-amber-300"/>
             <h3 className="font-serif text-lg text-slate-100">Predictions</h3>
@@ -2988,26 +3072,47 @@ function LiveDemoTab() {
               onClick={() => setMode('simulated')}
               className={`px-3 py-1.5 rounded-md text-[11px] font-mono tracking-wider transition-all
                 ${mode === 'simulated' ? 'bg-amber-500/25 text-amber-200 shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+              title="Hand-curated probabilities for the gallery presets — illustrative only"
             >
-              SIMULATED
+              ILLUSTRATIVE
             </button>
             <button
               onClick={() => setMode('real')}
               className={`px-3 py-1.5 rounded-md text-[11px] font-mono tracking-wider transition-all flex items-center gap-1
                 ${mode === 'real' ? 'bg-teal-500/25 text-teal-200 shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+              title="Run a real ViT-Base/16 model in the browser"
             >
-              <Cpu size={11}/> REAL CLASSIFIER
+              <Cpu size={11}/> REAL MODEL
             </button>
           </div>
         </div>
+
+        {mode === 'simulated' && (
+          <div className="mb-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/40 flex items-start gap-2">
+            <Sparkles size={14} className="text-amber-300 mt-0.5 shrink-0"/>
+            <div className="text-[13px] text-amber-100/95 leading-relaxed">
+              <span className="font-medium">These are not real model outputs.</span> The bars below are
+              hand-curated probabilities I picked to be plausible for each preset image, animated by scan
+              progress so the demo looks alive without needing to download a model.
+              {' '}
+              <button
+                onClick={() => setMode('real')}
+                className="underline underline-offset-2 hover:text-amber-50"
+              >
+                Switch to Real Model
+              </button>{' '}
+              to see what the actual ViT-Base/16 predicts.
+            </div>
+          </div>
+        )}
 
         {mode === 'real' && (
           <div className="mb-4 p-3 rounded-lg bg-slate-800/40 border border-slate-700/60">
             {realStatus === 'idle' && (
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <p className="text-[13px] text-slate-300">
-                  Runs <span className="text-teal-300 font-medium">ViT-Base/16</span> in your browser via transformers.js.
-                  First load downloads ~88 MB, cached afterward.
+                  Runs <span className="text-teal-300 font-medium">ViT-Base/16</span> (ImageNet-1K) in your browser
+                  via transformers.js. First load downloads ~88 MB; cached afterward.
                 </p>
                 <button onClick={runReal}
                   className="px-3 py-1.5 rounded-lg bg-teal-500/20 hover:bg-teal-500/30 border border-teal-500/50 text-teal-100 text-sm whitespace-nowrap transition-all">
@@ -3028,7 +3133,10 @@ function LiveDemoTab() {
             )}
             {realStatus === 'ready' && (
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-[13px] text-teal-200">Real ViT-Base/16 prediction · model cached.</p>
+                <p className="text-[13px] text-teal-200">
+                  <Check size={12} className="inline mr-1"/>
+                  Real ViT-Base/16 output · model cached for next run.
+                </p>
                 <button onClick={runReal}
                   className="px-3 py-1.5 rounded-lg bg-teal-500/20 hover:bg-teal-500/30 border border-teal-500/50 text-teal-100 text-sm whitespace-nowrap transition-all">
                   Re-run
@@ -3043,17 +3151,11 @@ function LiveDemoTab() {
 
         {mode === 'real' && !realPreds ? (
           <p className="text-sm text-slate-500 text-center py-6">
-            {realStatus === 'idle' ? 'Click "Run on this image" to get a real ViT prediction.' : ''}
+            {realStatus === 'idle' ? 'Click "Run on this image" above to get the real model\'s prediction.' : ''}
           </p>
         ) : (
           <PredictionBars preds={showPreds} accent={mode === 'real' ? 'teal' : 'amber'} />
         )}
-
-        <p className="text-[11px] font-mono text-slate-500 mt-4">
-          {mode === 'simulated'
-            ? '// Simulated probabilities — illustrative only, scaled by scan progress.'
-            : '// Real predictions from Xenova/vit-base-patch16-224 (ImageNet-1K).'}
-        </p>
       </Card>
     </div>
   );
