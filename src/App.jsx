@@ -3210,6 +3210,252 @@ function drawClassHeatmap(canvas, img, attentionRows, gridN, intensity = 1) {
   ctx.globalCompositeOperation = 'source-over';
 }
 
+/* ClassifierFlow — full neural-network forward-pass demo.
+   Shows tokens → encoder × L → CLS extraction → real matrix multiplication
+   CLS · W = logits → softmax → top-K probabilities. Values are
+   deterministic per image so the visual is reproducible.
+
+   This is "how the matrix becomes a prediction" with actual math made
+   visible: the CLS vector and W matrix have signed entries (amber+,
+   teal−); the W·CLS dot products produce the logit bars; softmax
+   normalizes them to the probability bars at the bottom. */
+function ClassifierFlow({ progress, preds, seedKey }) {
+  const stage = progress >= 0.92 ? 5
+              : progress >= 0.78 ? 4
+              : progress >= 0.62 ? 3
+              : progress >= 0.45 ? 2
+              : progress >= 0.25 ? 1 : 0;
+  const D_show = 12;
+  const C_show = 5;
+
+  // Deterministic per-image CLS, W, and logits.
+  const computed = useMemo(() => {
+    const seedNum = (typeof seedKey === 'string' ? seedKey : String(seedKey || 'default'))
+      .split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+    const rng = mulberry32(7919 + seedNum);
+    const cls = Array.from({ length: D_show }, () => (rng() - 0.5) * 1.8);
+    const W = Array.from({ length: D_show * C_show }, () => (rng() - 0.5) * 1.3);
+    const logits = Array(C_show).fill(0);
+    for (let c = 0; c < C_show; c++) {
+      let s = 0;
+      for (let d = 0; d < D_show; d++) s += cls[d] * W[d * C_show + c];
+      logits[c] = s;
+    }
+    // softmax
+    let mx = -Infinity;
+    for (const v of logits) if (v > mx) mx = v;
+    const exps = logits.map(v => Math.exp(v - mx));
+    const sum = exps.reduce((a, b) => a + b, 0);
+    const probs = exps.map(e => e / sum);
+    return { cls, W, logits, probs };
+  }, [seedKey]);
+
+  const labels = preds && preds.length >= C_show
+    ? preds.slice(0, C_show).map(p => p.label)
+    : ['tabby cat', 'tiger cat', 'Egyptian cat', 'lynx', 'Persian cat'];
+
+  // Use the real (or simulated) probabilities for display so the
+  // bottom row matches the predictions panel below; keep our toy logits
+  // for the visualization of the matmul mechanics.
+  const realProbs = preds && preds.length >= C_show
+    ? preds.slice(0, C_show).map(p => p.score)
+    : computed.probs;
+
+  // ----- Sub-elements -----
+
+  const SignedBar = ({ v, max = 1.5, w = 'w-3', orient = 'vertical', active = true }) => {
+    const t = Math.min(1, Math.abs(v) / max);
+    const color = v >= 0 ? `rgba(245,158,11,${active ? 0.85 : 0.25})` : `rgba(20,184,166,${active ? 0.85 : 0.25})`;
+    if (orient === 'horizontal') {
+      const len = Math.max(2, Math.round(t * 36));
+      return (
+        <div className="h-2 flex" style={{ width: 36 }}>
+          <div className="flex-1 flex justify-end">
+            {v < 0 && <div className="h-full rounded-l-sm" style={{ width: len, background: color }} />}
+          </div>
+          <div className="w-px bg-slate-700"/>
+          <div className="flex-1 flex justify-start">
+            {v >= 0 && <div className="h-full rounded-r-sm" style={{ width: len, background: color }} />}
+          </div>
+        </div>
+      );
+    }
+    const len = Math.max(2, Math.round(t * 28));
+    return (
+      <div className={`${w} flex flex-col items-center`} style={{ height: 60 }}>
+        <div className="flex-1 w-full flex items-end justify-center">
+          {v >= 0 && <div className={`${w} rounded-t-sm`} style={{ height: len, background: color }} />}
+        </div>
+        <div className="w-full h-px bg-slate-700"/>
+        <div className="flex-1 w-full flex items-start justify-center">
+          {v < 0 && <div className={`${w} rounded-b-sm`} style={{ height: len, background: color }} />}
+        </div>
+      </div>
+    );
+  };
+
+  const EncoderGraph = ({ active }) => {
+    const NODES = 5;
+    const W = 70, H = 60;
+    const inX = 8, outX = W - 8;
+    const ys = Array.from({ length: NODES }, (_, i) => 6 + i * (H - 12) / (NODES - 1));
+    return (
+      <svg width={W} height={H} className="block">
+        {active && ys.flatMap((y1, i) =>
+          ys.map((y2, j) => (
+            <line key={`e-${i}-${j}`} x1={inX} y1={y1} x2={outX} y2={y2}
+              stroke="rgba(245,158,11,0.20)" strokeWidth="0.4"/>
+          ))
+        )}
+        {ys.map((y, i) => <circle key={`l-${i}`} cx={inX} cy={y} r={2.4}
+          fill={active ? '#fbbf24' : '#475569'}/>)}
+        {ys.map((y, i) => <circle key={`r-${i}`} cx={outX} cy={y} r={2.4}
+          fill={active ? '#fbbf24' : '#475569'}/>)}
+      </svg>
+    );
+  };
+
+  return (
+    <div className="space-y-5">
+      {/* TOP: token flow through encoder → extract CLS */}
+      <div className="flex items-end justify-center gap-2 flex-wrap">
+        <div className="flex flex-col items-center">
+          <div className="text-[9px] font-mono uppercase tracking-wide text-amber-400/80 mb-1">patches</div>
+          <div className="space-y-0.5">
+            {[0, 1, 2, 3, 4].map(i => (
+              <div key={i} className="w-9 h-1.5 rounded-sm"
+                style={{ background: stage >= 0 ? `linear-gradient(to right, hsl(${i*60}, 65%, 55%), hsl(${i*60+50}, 60%, 50%))` : 'rgba(100,116,139,0.2)' }}/>
+            ))}
+          </div>
+          <div className="text-[8px] font-mono text-slate-500 mt-1">N × D</div>
+        </div>
+
+        <div className={`text-base font-mono pb-3 ${stage >= 1 ? 'text-amber-400' : 'text-slate-700'}`}>→</div>
+
+        <div className="flex flex-col items-center">
+          <div className={`text-[9px] font-mono uppercase tracking-wide mb-1 ${stage >= 1 ? 'text-amber-400/80' : 'text-slate-500'}`}>self-attention</div>
+          <div className={`rounded-md border px-1.5 py-1 ${stage >= 1 ? 'bg-amber-500/10 border-amber-500/50' : 'bg-slate-800/30 border-slate-700/60'}`}>
+            <EncoderGraph active={stage >= 1}/>
+          </div>
+          <div className={`text-[8px] font-mono mt-1 ${stage >= 1 ? 'text-amber-300/80' : 'text-slate-500'}`}>× L = 12</div>
+        </div>
+
+        <div className={`text-base font-mono pb-3 ${stage >= 2 ? 'text-amber-400' : 'text-slate-700'}`}>→</div>
+
+        <div className="flex flex-col items-center">
+          <div className={`text-[9px] font-mono uppercase tracking-wide mb-1 ${stage >= 2 ? 'text-rose-400/90' : 'text-slate-500'}`}>extract [CLS]</div>
+          <div className="space-y-0.5">
+            <div className={`w-9 h-1.5 rounded-sm ring-1 ring-rose-300 ${stage >= 2 ? 'shadow shadow-rose-500/50' : ''}`}
+              style={{ background: stage >= 2 ? 'rgba(244,63,94,0.85)' : 'rgba(244,63,94,0.30)' }}/>
+            {[0, 1, 2, 3].map(i => (
+              <div key={i} className="w-9 h-1.5 rounded-sm bg-slate-700/30 opacity-50"/>
+            ))}
+          </div>
+          <div className="text-[8px] font-mono text-slate-500 mt-1">1 × D</div>
+        </div>
+      </div>
+
+      {/* MIDDLE: real matrix multiplication CLS · W = logits */}
+      <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+        <div className="text-[10px] font-mono uppercase tracking-wider text-amber-400/70 mb-3 text-center">
+          linear classifier · logits = CLS · W
+        </div>
+        <div className="flex items-center justify-center gap-3 flex-wrap">
+          {/* CLS vector — signed bars */}
+          <div className="flex flex-col items-center">
+            <div className="text-[10px] font-mono text-rose-300 mb-1">[CLS]</div>
+            <div className={`flex gap-0.5 px-1.5 py-1 rounded border transition-all
+              ${stage >= 2 ? 'bg-rose-500/5 border-rose-500/40' : 'bg-slate-800/30 border-slate-700/60'}`}>
+              {computed.cls.map((v, i) => (
+                <SignedBar key={i} v={v} active={stage >= 2}/>
+              ))}
+            </div>
+            <div className="text-[8px] font-mono text-slate-500 mt-1">D = 768 (12 dims shown)</div>
+          </div>
+
+          <div className={`text-2xl font-mono pb-2 ${stage >= 3 ? 'text-amber-400' : 'text-slate-700'}`}>·</div>
+
+          {/* W matrix — D × C colored grid */}
+          <div className="flex flex-col items-center">
+            <div className="text-[10px] font-mono text-amber-300 mb-1">W</div>
+            <div className={`p-1 rounded border transition-all
+              ${stage >= 3 ? 'bg-amber-500/5 border-amber-500/40' : 'bg-slate-800/30 border-slate-700/60'}`}>
+              <div className="grid gap-px" style={{ gridTemplateColumns: `repeat(${D_show}, minmax(0, 1fr))` }}>
+                {computed.W.map((v, i) => {
+                  const c = i % C_show;
+                  const d = Math.floor(i / C_show);
+                  // arrange row-major by class so each row is one class
+                  const idx = c * D_show + d;
+                  return null;
+                })}
+                {Array.from({ length: C_show }).flatMap((_, c) =>
+                  Array.from({ length: D_show }).map((_, d) => {
+                    const v = computed.W[d * C_show + c];
+                    const t = Math.min(1, Math.abs(v) / 1.3);
+                    const bg = v >= 0
+                      ? `rgba(245,158,11,${stage >= 3 ? 0.15 + t * 0.8 : 0.1})`
+                      : `rgba(20,184,166,${stage >= 3 ? 0.15 + t * 0.8 : 0.1})`;
+                    return (
+                      <div key={`${c}-${d}`} className="w-3 h-3 rounded-[1px]"
+                        title={`W[d=${d}, class=${c}] = ${v.toFixed(2)}`}
+                        style={{ background: bg, gridRow: c + 1, gridColumn: d + 1 }}/>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+            <div className="text-[8px] font-mono text-slate-500 mt-1">D × C (each row = one class)</div>
+          </div>
+
+          <div className={`text-2xl font-mono pb-2 ${stage >= 4 ? 'text-amber-400' : 'text-slate-700'}`}>=</div>
+
+          {/* Logits — signed bars per class */}
+          <div className="flex flex-col items-center">
+            <div className="text-[10px] font-mono text-teal-300 mb-1">logits</div>
+            <div className={`flex flex-col gap-1 px-2 py-1 rounded border transition-all
+              ${stage >= 4 ? 'bg-teal-500/5 border-teal-500/40' : 'bg-slate-800/30 border-slate-700/60'}`}>
+              {computed.logits.map((v, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <span className="text-[8px] font-mono text-slate-500 w-4 text-right">{i}</span>
+                  <SignedBar v={v} max={3.5} orient="horizontal" active={stage >= 4}/>
+                  <span className={`text-[9px] font-mono w-8 ${v >= 0 ? 'text-amber-300' : 'text-teal-300'}`}>
+                    {v.toFixed(2)}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="text-[8px] font-mono text-slate-500 mt-1">unnormalized scores</div>
+          </div>
+        </div>
+      </div>
+
+      {/* BOTTOM: softmax → probabilities */}
+      <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+        <div className="flex items-center gap-3 mb-2">
+          <div className="text-[10px] font-mono uppercase tracking-wider text-amber-400/70">
+            softmax(logits) → class probabilities
+          </div>
+          <div className="text-[10px] font-mono text-slate-500">P(class) = exp(logit) / Σ exp(logits)</div>
+        </div>
+        <div className="space-y-1.5 max-w-2xl">
+          {realProbs.map((p, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <span className="text-[11px] font-mono text-slate-300 w-32 truncate text-right">{labels[i]}</span>
+              <div className="flex-1 h-2.5 bg-slate-800 rounded overflow-hidden">
+                <div className={`h-full transition-all duration-500 ${i === 0 ? 'bg-teal-400' : 'bg-teal-400/40'}`}
+                  style={{ width: `${(stage >= 5 ? p : p * Math.min(1, (stage / 5))) * 100}%` }}/>
+              </div>
+              <span className="text-[11px] font-mono text-teal-300 w-12">
+                {((stage >= 5 ? p : p * Math.min(1, (stage / 5))) * 100).toFixed(1)}%
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* MiniArch — concrete neural-network sketch. Tokens are rendered as
    colored bars so it's clear they're vectors. The encoder is a tiny
    bipartite graph showing every token attending to every token (which
@@ -3606,50 +3852,60 @@ function LiveDemoTab() {
         </Card>
       </div>
 
-      {/* Heatmap + architecture flow side-by-side, both compact, so they
-          fit alongside the controls and predictions on one screen. */}
-      <div className="grid lg:grid-cols-2 gap-4">
-        <Card className="p-3">
-          <div className="flex items-baseline justify-between gap-2 mb-2">
-            <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/80">
-              What the model is looking at
-            </div>
-            <span className="text-[10px] font-mono text-slate-500">col-sum of attn ≈ [CLS] view</span>
+      {/* Heatmap card kept compact at the top. */}
+      <Card className="p-3">
+        <div className="flex items-baseline justify-between gap-2 mb-2">
+          <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/80">
+            What the model is looking at
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <div className="flex items-center gap-1.5 mb-1">
-                <Tag color="amber">ViT</Tag>
-                <span className="text-[10px] font-mono text-slate-400">global</span>
-              </div>
-              <canvas ref={heatVitRef} className="w-full rounded bg-slate-950 aspect-square block" />
+          <span className="text-[10px] font-mono text-slate-500">col-sum of attn ≈ [CLS] view</span>
+        </div>
+        <div className="grid grid-cols-2 gap-3 max-w-2xl mx-auto">
+          <div>
+            <div className="flex items-center gap-1.5 mb-1">
+              <Tag color="amber">ViT</Tag>
+              <span className="text-[10px] font-mono text-slate-400">global</span>
             </div>
-            <div>
-              <div className="flex items-center gap-1.5 mb-1">
-                <Tag color="teal">Swin</Tag>
-                <span className="text-[10px] font-mono text-slate-400">windowed</span>
-              </div>
-              <canvas ref={heatSwinRef} className="w-full rounded bg-slate-950 aspect-square block" />
-            </div>
+            <canvas ref={heatVitRef} className="w-full rounded bg-slate-950 aspect-square block"/>
           </div>
-          <p className="text-[11px] text-slate-400 mt-2 leading-snug">
-            Bright = patches the [CLS] token pulls most info from. ViT's view is smooth;
-            Swin's is bounded by its 4×4 windows.
-          </p>
-        </Card>
+          <div>
+            <div className="flex items-center gap-1.5 mb-1">
+              <Tag color="teal">Swin</Tag>
+              <span className="text-[10px] font-mono text-slate-400">windowed</span>
+            </div>
+            <canvas ref={heatSwinRef} className="w-full rounded bg-slate-950 aspect-square block"/>
+          </div>
+        </div>
+        <p className="text-[11px] text-slate-400 mt-2 leading-snug text-center">
+          Bright = patches the [CLS] token pulls most info from. ViT's view is smooth;
+          Swin's is bounded by its 4×4 windows.
+        </p>
+      </Card>
 
-        <Card className="p-3">
-          <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/80 mb-2">
+      {/* Detailed neural-network forward pass — matrix multiplication
+          made visible, end to end. */}
+      <Card className="p-4">
+        <div className="flex items-baseline justify-between gap-2 mb-3 flex-wrap">
+          <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/80">
             How the matrix becomes a prediction
           </div>
-          <MiniArch progress={progress} topPred={(mode === 'real' ? realPreds : (customSrc ? SIM_FALLBACK : (SIM_PREDS[galleryId] || SIM_FALLBACK)))?.[0]} />
-          <p className="text-[11px] text-slate-400 mt-3 leading-snug">
-            The attention matrix lives <em>inside</em> the encoder block (left graph above).
-            Stack <Eq>L ≈ 12</Eq> of them, extract <span className="text-rose-300">[CLS]</span>,
-            multiply by a learned <Eq>W</Eq> → class scores.
-          </p>
-        </Card>
-      </div>
+          <span className="text-[10px] font-mono text-slate-500">
+            real linear-classifier math · amber bars +ve, teal bars −ve
+          </span>
+        </div>
+        <ClassifierFlow
+          progress={progress}
+          preds={mode === 'real' ? realPreds : (customSrc ? SIM_FALLBACK : (SIM_PREDS[galleryId] || SIM_FALLBACK))}
+          seedKey={customSrc ? 'custom' : galleryId}
+        />
+        <p className="text-[11px] text-slate-400 mt-3 leading-snug max-w-3xl">
+          Top row: tokens flow through L = 12 encoder blocks, then [CLS] is extracted.
+          Middle: the actual matmul. Each cell of <Eq>W</Eq> is a learned weight; row <em>c</em> of
+          <Eq>W</Eq> times the [CLS] vector gives the score for class <em>c</em>.
+          Bottom: softmax turns scores into a probability distribution — the same one shown in the
+          predictions panel below.
+        </p>
+      </Card>
 
       <Card className="p-5">
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
