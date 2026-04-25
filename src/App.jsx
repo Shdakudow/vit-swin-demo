@@ -3296,12 +3296,13 @@ function drawClassContrib(canvas, img, attentionRows, gridN, classIdx) {
 }
 
 /* ClassContribution — image with a class-specific evidence heatmap +
-   clickable top-5 prediction list. Concrete answer to "why this class?". */
-function ClassContribution({ image, attentionRows, gridN, preds, hasResult }) {
+   clickable top-5 prediction list. Concrete answer to "why this class?".
+   Self-contained loading UI so it can replace the standalone predictions
+   panel. */
+function ClassContribution({ image, attentionRows, gridN, preds, status, statusMessage, statusProgress }) {
   const [classIdx, setClassIdx] = useState(0);
   const canvasRef = useRef(null);
 
-  // Reset to top-1 when predictions change.
   useEffect(() => { setClassIdx(0); }, [preds]);
 
   useEffect(() => {
@@ -3310,48 +3311,68 @@ function ClassContribution({ image, attentionRows, gridN, preds, hasResult }) {
   }, [image, attentionRows, gridN, classIdx]);
 
   const top5 = (preds || []).slice(0, 5);
+  const loading = status === 'modelLoading' || status === 'inferring';
 
   return (
-    <div className="flex gap-4 items-start flex-wrap">
+    <div className="flex gap-3 items-start flex-wrap">
       <div className="flex-shrink-0">
         <canvas
           ref={canvasRef}
-          className="w-[240px] h-[240px] rounded bg-slate-950 block"
+          className="w-[180px] h-[180px] rounded bg-slate-950 block"
         />
-        <div className="text-[10px] font-mono text-slate-500 mt-1.5 text-center max-w-[240px]">
-          {hasResult && top5[classIdx]
-            ? <>regions of evidence for <span className="text-amber-300">"{top5[classIdx].label}"</span></>
-            : 'pick an image and let the scan run'}
+        <div className="text-[10px] font-mono text-slate-500 mt-1 text-center w-[180px] truncate">
+          {top5[classIdx]
+            ? <>evidence for <span className="text-amber-300">"{top5[classIdx].label}"</span></>
+            : status === 'modelLoading' ? `loading model · ${statusProgress || 0}%`
+            : status === 'inferring' ? 'running ViT-Base…'
+            : 'waiting for predictions'}
         </div>
       </div>
 
-      <div className="flex-1 min-w-[220px] space-y-1.5">
-        <div className="text-[10px] font-mono uppercase tracking-wide text-amber-400/80 mb-1">
-          click a class · see its evidence
+      <div className="flex-1 min-w-[180px] space-y-1">
+        <div className="flex items-baseline justify-between">
+          <span className="text-[10px] font-mono uppercase tracking-wide text-amber-400/80">
+            ViT-Base/16 · top 5
+          </span>
+          {loading && (
+            <span className="text-[10px] font-mono text-teal-300 flex items-center gap-1">
+              <Loader2 size={10} className="animate-spin"/>
+              {status === 'modelLoading' ? `${statusProgress || 0}%` : '…'}
+            </span>
+          )}
         </div>
-        {top5.length === 0 && (
-          <div className="text-[12px] text-slate-500 italic">
-            Predictions will appear here once the scan starts.
+
+        {status === 'modelLoading' && top5.length === 0 && (
+          <div className="text-[11px] text-slate-400 leading-snug py-1">
+            <div className="mb-1">{statusMessage || 'Loading model…'}</div>
+            <div className="h-1 bg-slate-800 rounded overflow-hidden">
+              <div className="h-full bg-teal-400 transition-all" style={{ width: `${statusProgress || 0}%` }}/>
+            </div>
           </div>
         )}
+
+        {status === 'error' && (
+          <div className="text-[11px] text-rose-300 leading-snug py-1">{statusMessage}</div>
+        )}
+
         {top5.map((p, i) => {
           const active = classIdx === i;
           return (
             <button
               key={i}
               onClick={() => setClassIdx(i)}
-              className={`w-full text-left px-2.5 py-1.5 rounded-md border transition-all
+              className={`w-full text-left px-2 py-1 rounded border transition-all
                 ${active
                   ? 'bg-amber-500/15 border-amber-500/50 text-amber-100'
                   : 'bg-slate-800/30 border-slate-700/50 hover:border-slate-600 text-slate-300'}`}
             >
-              <div className="flex justify-between items-center text-[12px] gap-2">
+              <div className="flex justify-between items-center text-[11px] gap-2 leading-tight">
                 <span className="truncate">{p.label}</span>
                 <span className={`font-mono shrink-0 ${active ? 'text-amber-300' : 'text-slate-400'}`}>
                   {(p.score * 100).toFixed(0)}%
                 </span>
               </div>
-              <div className="h-1 bg-slate-800 rounded mt-1 overflow-hidden">
+              <div className="h-1 bg-slate-800 rounded mt-0.5 overflow-hidden">
                 <div
                   className={`h-full transition-all ${active ? 'bg-amber-400' : 'bg-slate-500'}`}
                   style={{ width: `${p.score * 100}%` }}
@@ -3802,28 +3823,26 @@ function LiveDemoTab() {
   const [progress, setProgress] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState('Slow');
-  const [mode, setMode] = useState('simulated');
 
-  const [realPreds, setRealPreds] = useState(null);
-  const [realStatus, setRealStatus] = useState('idle');
-  const [realProgress, setRealProgress] = useState(0);
-  const [realMessage, setRealMessage] = useState('');
+  // Real classifier state — always on. Loads once on mount, then runs
+  // inference automatically on every image change.
   const classifierRef = useRef(null);
+  const [modelStatus, setModelStatus] = useState('modelLoading'); // modelLoading | inferring | ready | error
+  const [modelMessage, setModelMessage] = useState('Loading transformers.js…');
+  const [modelProgress, setModelProgress] = useState(0);
+  const [realPreds, setRealPreds] = useState(null);
 
   const vitRef = useRef();
   const swinRef = useRef();
   const vitMatRef = useRef();
   const swinMatRef = useRef();
-  const heatVitRef = useRef();
-  const heatSwinRef = useRef();
   const imgRef = useRef();
   const attnRef = useRef(null);
-  // Bumped when the image finishes loading; lets child components
-  // (ClassContribution) re-render with the now-available image+attention.
   const [imgVersion, setImgVersion] = useState(0);
 
   const reset = useCallback(() => { setProgress(0); setPlaying(false); }, []);
 
+  // Image load + attention computation
   useEffect(() => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
@@ -3834,13 +3853,10 @@ function LiveDemoTab() {
       drawScan(swinRef.current, img, 360, patchSize, progress, 'swin');
       drawMatrix(vitMatRef.current, attnRef.current?.vit, progress, 'vit');
       drawMatrix(swinMatRef.current, attnRef.current?.swin, progress, 'swin');
-      drawClassHeatmap(heatVitRef.current, img, attnRef.current?.vit, MAT_N, Math.max(0.15, progress));
-      drawClassHeatmap(heatSwinRef.current, img, attnRef.current?.swin, MAT_N, Math.max(0.15, progress));
       setImgVersion(v => v + 1);
     };
     img.src = imgSrc;
     setRealPreds(null);
-    setRealStatus('idle');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imgSrc]);
 
@@ -3850,8 +3866,6 @@ function LiveDemoTab() {
     drawScan(swinRef.current, imgRef.current, 360, patchSize, progress, 'swin');
     drawMatrix(vitMatRef.current, attnRef.current?.vit, progress, 'vit');
     drawMatrix(swinMatRef.current, attnRef.current?.swin, progress, 'swin');
-    drawClassHeatmap(heatVitRef.current, imgRef.current, attnRef.current?.vit, MAT_N, Math.max(0.15, progress));
-    drawClassHeatmap(heatSwinRef.current, imgRef.current, attnRef.current?.swin, MAT_N, Math.max(0.15, progress));
   }, [patchSize, progress]);
 
   useEffect(() => {
@@ -3868,78 +3882,98 @@ function LiveDemoTab() {
     return () => clearInterval(id);
   }, [playing, speed]);
 
-  const baseSim = customSrc ? SIM_FALLBACK : (SIM_PREDS[galleryId] || SIM_FALLBACK);
-  const animatedSim = baseSim.map(p => ({
-    ...p,
-    score: progress < 0.05 ? 0 : p.score * Math.min(1, (progress - 0.05) / 0.95),
-  }));
+  const [modelReady, setModelReady] = useState(false);
 
-  async function runReal() {
-    if (realStatus === 'loading') return;
-    setRealStatus('loading');
-    setRealPreds(null);
-    setRealProgress(0);
-    try {
-      if (!classifierRef.current) {
-        setRealMessage('Loading transformers.js…');
+  // Load the real classifier once on mount.
+  useEffect(() => {
+    let canceled = false;
+    (async () => {
+      try {
+        setModelMessage('Loading transformers.js…');
         const mod = await import('@huggingface/transformers');
         mod.env.allowLocalModels = false;
-        setRealMessage('Downloading ViT-Base/16 weights (~88 MB, cached after first run)…');
-        classifierRef.current = await mod.pipeline(
+        setModelMessage('Downloading ViT-Base/16 (~88 MB · cached after)');
+        const cls = await mod.pipeline(
           'image-classification',
           'Xenova/vit-base-patch16-224',
           {
             progress_callback: (data) => {
-              if (data.status === 'progress') {
-                setRealProgress(Math.round(data.progress || 0));
+              if (data.status === 'progress' && !canceled) {
+                setModelProgress(Math.round(data.progress || 0));
               }
             },
           }
         );
+        if (canceled) return;
+        classifierRef.current = cls;
+        setModelMessage('');
+        setModelReady(true);
+      } catch (err) {
+        if (!canceled) {
+          setModelStatus('error');
+          setModelMessage(String(err.message || err));
+        }
       }
-      setRealMessage('Running inference…');
-      const out = await classifierRef.current(imgSrc, { topk: 5 });
-      setRealPreds(out);
-      setRealStatus('ready');
-      setRealMessage('');
-    } catch (err) {
-      console.error(err);
-      setRealStatus('error');
-      setRealMessage(String(err.message || err));
-    }
-  }
+    })();
+    return () => { canceled = true; };
+  }, []);
 
-  const showPreds = mode === 'real' ? realPreds : animatedSim;
+  // Run inference on every image change once the model is available.
+  useEffect(() => {
+    if (!modelReady || !imgSrc) return;
+    let canceled = false;
+    setModelStatus('inferring');
+    setRealPreds(null);
+    (async () => {
+      try {
+        const out = await classifierRef.current(imgSrc, { topk: 5 });
+        if (!canceled) {
+          setRealPreds(out);
+          setModelStatus('ready');
+        }
+      } catch (err) {
+        if (!canceled) {
+          setModelStatus('error');
+          setModelMessage(String(err.message || err));
+        }
+      }
+    })();
+    return () => { canceled = true; };
+  }, [modelReady, imgSrc]);
+
+  // Status string passed to the predictions panel inside ClassContribution.
+  const ccStatus = !modelReady ? 'modelLoading'
+    : modelStatus === 'inferring' ? 'inferring'
+    : modelStatus === 'error' ? 'error'
+    : 'ready';
 
   return (
-    <div className="space-y-6">
-      <div>
-        <span className="font-mono text-[10px] tracking-[0.3em] text-amber-400/70 uppercase">Live demo</span>
-        <h2 className="font-serif text-3xl text-slate-100 mt-1 mb-2 tracking-tight">
-          Watch the model look at a cat
+    <div className="space-y-3">
+      {/* Compact header */}
+      <div className="flex items-baseline justify-between flex-wrap gap-2">
+        <h2 className="font-serif text-2xl text-slate-100 tracking-tight">
+          Watch the model classify
         </h2>
-        <p className="text-slate-300/90 leading-relaxed max-w-2xl">
-          Pick an image, hit play, and see how Vision Transformer (ViT) and Swin Transformer
-          scan it patch by patch. ViT lets every patch attend to every other; Swin keeps
-          attention inside local windows. The probability bars below show the model's confidence
-          in each class.
-        </p>
+        <span className="text-[11px] font-mono text-slate-400">
+          ViT-Base/16 (ImageNet-1K) · runs in your browser · pick an image, hit play
+        </span>
       </div>
 
-      <Card className="p-5">
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      {/* Image gallery — compact single row */}
+      <Card className="p-2">
+        <div className="grid grid-cols-4 gap-2">
           {GALLERY.map(g => (
             <button
               key={g.id}
               onClick={() => { setCustomSrc(null); setGalleryId(g.id); reset(); }}
-              className={`relative rounded-lg overflow-hidden border-2 aspect-square transition-all
-                ${!customSrc && galleryId === g.id ? 'border-amber-400 shadow-lg shadow-amber-500/10' : 'border-slate-700 hover:border-slate-500'}`}
+              className={`relative rounded-md overflow-hidden border-2 aspect-[3/2] transition-all
+                ${!customSrc && galleryId === g.id ? 'border-amber-400 shadow shadow-amber-500/15' : 'border-slate-700 hover:border-slate-500'}`}
             >
-              <img src={g.src} alt="" className="w-full h-full object-cover" />
+              <img src={g.src} alt="" className="w-full h-full object-cover"/>
             </button>
           ))}
-          <label className={`relative rounded-lg overflow-hidden border-2 transition-all flex items-center justify-center cursor-pointer aspect-square
-            ${customSrc ? 'border-amber-400 shadow-lg shadow-amber-500/10' : 'border-dashed border-slate-700 hover:border-slate-500 bg-slate-800/30'}`}>
+          <label className={`relative rounded-md overflow-hidden border-2 transition-all flex items-center justify-center cursor-pointer aspect-[3/2]
+            ${customSrc ? 'border-amber-400 shadow shadow-amber-500/15' : 'border-dashed border-slate-700 hover:border-slate-500 bg-slate-800/30'}`}>
             <input
               type="file"
               accept="image/*"
@@ -3953,157 +3987,120 @@ function LiveDemoTab() {
               }}
             />
             {customSrc ? (
-              <img src={customSrc} alt="" className="w-full h-full object-cover" />
+              <img src={customSrc} alt="" className="w-full h-full object-cover"/>
             ) : (
               <div className="text-center">
-                <Upload size={20} className="mx-auto mb-1 text-slate-400" />
-                <span className="text-[11px] font-mono text-slate-400">Upload</span>
+                <Upload size={16} className="mx-auto mb-0.5 text-slate-400"/>
+                <span className="text-[10px] font-mono text-slate-400">Upload</span>
               </div>
             )}
           </label>
         </div>
       </Card>
 
-      <div className="grid sm:grid-cols-2 gap-4">
-        <Card className="p-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
+      {/* Three-column main row: ViT scan/matrix · Swin scan/matrix · per-class predictions */}
+      <div className="grid lg:grid-cols-3 gap-3">
+        <Card className="p-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-1.5">
               <Tag color="amber">ViT</Tag>
-              <span className="text-sm text-slate-200">Global Attention</span>
+              <span className="text-[12px] text-slate-200">Global</span>
             </div>
             <span className="text-[10px] font-mono text-slate-500 uppercase">O(N²)</span>
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <div className="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-1">Scan</div>
-              <canvas ref={vitRef} className="w-full rounded bg-slate-950 aspect-square" />
+              <div className="text-[10px] font-mono text-slate-500 uppercase mb-0.5">scan</div>
+              <canvas ref={vitRef} className="w-full rounded bg-slate-950 aspect-square"/>
             </div>
             <div>
-              <div className="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-1">Attention matrix</div>
-              <canvas ref={vitMatRef} className="w-full rounded bg-slate-950 aspect-square" />
+              <div className="text-[10px] font-mono text-slate-500 uppercase mb-0.5">matrix</div>
+              <canvas ref={vitMatRef} className="w-full rounded bg-slate-950 aspect-square"/>
             </div>
           </div>
-          <p className="text-[11px] text-slate-400 mt-3 leading-relaxed">
-            Lines reach every other patch · matrix fills densely (every row touches every column).
+          <p className="text-[10px] text-slate-400 mt-2 leading-snug">
+            Every patch attends to every other · dense matrix.
           </p>
         </Card>
-        <Card className="p-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
+
+        <Card className="p-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-1.5">
               <Tag color="teal">Swin</Tag>
-              <span className="text-sm text-slate-200">Windowed Attention</span>
+              <span className="text-[12px] text-slate-200">Windowed</span>
             </div>
             <span className="text-[10px] font-mono text-slate-500 uppercase">O(N)</span>
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <div className="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-1">Scan</div>
-              <canvas ref={swinRef} className="w-full rounded bg-slate-950 aspect-square" />
+              <div className="text-[10px] font-mono text-slate-500 uppercase mb-0.5">scan</div>
+              <canvas ref={swinRef} className="w-full rounded bg-slate-950 aspect-square"/>
             </div>
             <div>
-              <div className="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-1">Attention matrix</div>
-              <canvas ref={swinMatRef} className="w-full rounded bg-slate-950 aspect-square" />
+              <div className="text-[10px] font-mono text-slate-500 uppercase mb-0.5">matrix</div>
+              <canvas ref={swinMatRef} className="w-full rounded bg-slate-950 aspect-square"/>
             </div>
           </div>
-          <p className="text-[11px] text-slate-400 mt-3 leading-relaxed">
-            Attention stays inside one window · matrix is block-diagonal (4 windows of 16 patches).
+          <p className="text-[10px] text-slate-400 mt-2 leading-snug">
+            Attention stays inside windows · block-diagonal matrix.
           </p>
+        </Card>
+
+        <Card className="p-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-1.5">
+              <Brain size={14} className="text-amber-300"/>
+              <span className="text-[12px] text-slate-200">Why this class?</span>
+            </div>
+            <span className="text-[10px] font-mono text-slate-500">click → see evidence</span>
+          </div>
+          <ClassContribution
+            key={imgVersion}
+            image={imgRef.current}
+            attentionRows={attnRef.current?.vit}
+            gridN={MAT_N}
+            preds={realPreds}
+            status={ccStatus}
+            statusMessage={modelMessage}
+            statusProgress={modelProgress}
+          />
         </Card>
       </div>
 
-      {/* Heatmap card kept compact at the top. */}
+      {/* Compact controls row */}
       <Card className="p-3">
-        <div className="flex items-baseline justify-between gap-2 mb-2">
-          <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/80">
-            What the model is looking at
-          </div>
-          <span className="text-[10px] font-mono text-slate-500">col-sum of attn ≈ [CLS] view</span>
-        </div>
-        <div className="grid grid-cols-2 gap-3 max-w-2xl mx-auto">
-          <div>
-            <div className="flex items-center gap-1.5 mb-1">
-              <Tag color="amber">ViT</Tag>
-              <span className="text-[10px] font-mono text-slate-400">global</span>
-            </div>
-            <canvas ref={heatVitRef} className="w-full rounded bg-slate-950 aspect-square block"/>
-          </div>
-          <div>
-            <div className="flex items-center gap-1.5 mb-1">
-              <Tag color="teal">Swin</Tag>
-              <span className="text-[10px] font-mono text-slate-400">windowed</span>
-            </div>
-            <canvas ref={heatSwinRef} className="w-full rounded bg-slate-950 aspect-square block"/>
-          </div>
-        </div>
-        <p className="text-[11px] text-slate-400 mt-2 leading-snug text-center">
-          Bright = patches the [CLS] token pulls most info from. ViT's view is smooth;
-          Swin's is bounded by its 4×4 windows.
-        </p>
-      </Card>
-
-      {/* Per-class evidence heatmap — clicking a prediction shows the
-          patches that voted for THAT class. Far more pedagogical than
-          a generic matmul diagram. */}
-      <Card className="p-4">
-        <div className="flex items-baseline justify-between gap-2 mb-3 flex-wrap">
-          <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/80">
-            Why does the model predict each class?
-          </div>
-          <span className="text-[10px] font-mono text-slate-500">
-            class-conditional attention rollout
-          </span>
-        </div>
-        <ClassContribution
-          key={imgVersion}
-          image={imgRef.current}
-          attentionRows={attnRef.current?.vit}
-          gridN={MAT_N}
-          preds={mode === 'real' ? realPreds : (customSrc ? SIM_FALLBACK : (SIM_PREDS[galleryId] || SIM_FALLBACK))}
-          hasResult={mode === 'real' ? !!realPreds : progress > 0}
-        />
-        <p className="text-[11px] text-slate-400 mt-3 leading-snug">
-          Each class has its own "evidence map" — patches that match what the classifier looks for.
-          Click between the top-5 above and watch the bright region shift: that's how the model
-          decides between similar classes.
-        </p>
-        <div className="mt-2 pt-2 border-t border-slate-800 text-[10px] font-mono text-slate-500 text-center">
-          probability(class c) = softmax(<span className="text-rose-400/80">[CLS]</span> · <span className="text-amber-400/80">W</span>)<sub>c</sub>
-          {' · '}the heatmap above approximates the spatial source of that score
-        </div>
-      </Card>
-
-      <Card className="p-5">
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
-          <div className="flex gap-2 items-end">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
+          <div className="flex gap-2">
             <button
               onClick={() => { if (progress >= 1) setProgress(0); setPlaying(p => !p); }}
-              className="px-3.5 py-2 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-200 flex items-center gap-1.5 text-sm font-medium transition-all"
+              className="px-3 py-1.5 rounded-md bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-200 flex items-center gap-1.5 text-sm font-medium transition-all"
             >
-              {playing ? <Pause size={14}/> : <Play size={14}/>}
-              {playing ? 'Pause' : (progress >= 1 ? 'Replay' : 'Play scan')}
+              {playing ? <Pause size={13}/> : <Play size={13}/>}
+              {playing ? 'Pause' : (progress >= 1 ? 'Replay' : 'Play')}
             </button>
             <button
               onClick={reset}
-              className="px-3 py-2 rounded-lg bg-slate-800/60 hover:bg-slate-800 border border-slate-700 text-slate-300 flex items-center gap-1.5 text-sm transition-all"
+              className="px-2.5 py-1.5 rounded-md bg-slate-800/60 hover:bg-slate-800 border border-slate-700 text-slate-300 transition-all"
+              title="Reset"
             >
-              <RotateCcw size={14}/>
+              <RotateCcw size={13}/>
             </button>
           </div>
           <Slider
-            label="Scan Progress"
+            label="Progress"
             value={Math.round(progress * 100)}
             min={0} max={100} suffix="%"
             onChange={v => { setPlaying(false); setProgress(v / 100); }}
           />
           <Slider
-            label="Scan Speed"
+            label="Speed"
             value={speed}
             options={['Slow', 'Medium', 'Fast']}
             onChange={setSpeed}
           />
           <div>
-            <div className="flex items-baseline justify-between mb-1.5">
-              <label className="text-[12px] font-mono text-slate-400 uppercase tracking-wider">Patch Size (px)</label>
+            <div className="flex items-baseline justify-between mb-1">
+              <label className="text-[11px] font-mono text-slate-400 uppercase tracking-wider">Patch (px)</label>
               <span className="font-mono text-amber-300 text-sm">{patchSize}</span>
             </div>
             <div className="flex gap-1 items-stretch">
@@ -4111,7 +4108,7 @@ function LiveDemoTab() {
                 <button
                   key={opt}
                   onClick={() => { setPatchSize(opt); reset(); }}
-                  className={`flex-1 px-2 py-1.5 rounded text-xs font-mono border transition-all
+                  className={`flex-1 px-1.5 py-1 rounded text-xs font-mono border transition-all
                     ${patchSize === opt
                       ? 'bg-amber-500/20 border-amber-500/50 text-amber-200'
                       : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-600'}`}
@@ -4130,109 +4127,12 @@ function LiveDemoTab() {
                   setPatchSize(v);
                   reset();
                 }}
-                className="w-14 px-2 py-1.5 rounded text-xs font-mono bg-slate-900 border border-slate-700 text-amber-200 focus:border-amber-500 focus:outline-none"
+                className="w-12 px-1.5 py-1 rounded text-xs font-mono bg-slate-900 border border-slate-700 text-amber-200 focus:border-amber-500 focus:outline-none"
                 aria-label="Custom patch size"
               />
             </div>
           </div>
         </div>
-      </Card>
-
-      <Card className="p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-          <div className="flex items-center gap-2">
-            <Brain size={18} className="text-amber-300"/>
-            <h3 className="font-serif text-lg text-slate-100">Predictions</h3>
-          </div>
-          <div className="flex gap-1 bg-slate-800/60 rounded-lg p-1 border border-slate-700/60">
-            <button
-              onClick={() => setMode('simulated')}
-              className={`px-3 py-1.5 rounded-md text-[11px] font-mono tracking-wider transition-all
-                ${mode === 'simulated' ? 'bg-amber-500/25 text-amber-200 shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
-              title="Hand-curated probabilities for the gallery presets — illustrative only"
-            >
-              ILLUSTRATIVE
-            </button>
-            <button
-              onClick={() => setMode('real')}
-              className={`px-3 py-1.5 rounded-md text-[11px] font-mono tracking-wider transition-all flex items-center gap-1
-                ${mode === 'real' ? 'bg-teal-500/25 text-teal-200 shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
-              title="Run a real ViT-Base/16 model in the browser"
-            >
-              <Cpu size={11}/> REAL MODEL
-            </button>
-          </div>
-        </div>
-
-        {mode === 'simulated' && (
-          <div className="mb-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/40 flex items-start gap-2">
-            <Sparkles size={14} className="text-amber-300 mt-0.5 shrink-0"/>
-            <div className="text-[13px] text-amber-100/95 leading-relaxed">
-              <span className="font-medium">These are not real model outputs.</span> The bars below are
-              hand-curated probabilities I picked to be plausible for each preset image, animated by scan
-              progress so the demo looks alive without needing to download a model.
-              {' '}
-              <button
-                onClick={() => setMode('real')}
-                className="underline underline-offset-2 hover:text-amber-50"
-              >
-                Switch to Real Model
-              </button>{' '}
-              to see what the actual ViT-Base/16 predicts.
-            </div>
-          </div>
-        )}
-
-        {mode === 'real' && (
-          <div className="mb-4 p-3 rounded-lg bg-slate-800/40 border border-slate-700/60">
-            {realStatus === 'idle' && (
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-[13px] text-slate-300">
-                  Runs <span className="text-teal-300 font-medium">ViT-Base/16</span> (ImageNet-1K) in your browser
-                  via transformers.js. First load downloads ~88 MB; cached afterward.
-                </p>
-                <button onClick={runReal}
-                  className="px-3 py-1.5 rounded-lg bg-teal-500/20 hover:bg-teal-500/30 border border-teal-500/50 text-teal-100 text-sm whitespace-nowrap transition-all">
-                  Run on this image
-                </button>
-              </div>
-            )}
-            {realStatus === 'loading' && (
-              <div>
-                <div className="flex items-center gap-2 text-[13px] text-slate-300 mb-2">
-                  <Loader2 size={14} className="animate-spin text-teal-300"/>
-                  <span>{realMessage}</span>
-                </div>
-                <div className="h-1.5 bg-slate-700/60 rounded overflow-hidden">
-                  <div className="h-full bg-teal-400 transition-all" style={{ width: `${realProgress}%` }}/>
-                </div>
-              </div>
-            )}
-            {realStatus === 'ready' && (
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-[13px] text-teal-200">
-                  <Check size={12} className="inline mr-1"/>
-                  Real ViT-Base/16 output · model cached for next run.
-                </p>
-                <button onClick={runReal}
-                  className="px-3 py-1.5 rounded-lg bg-teal-500/20 hover:bg-teal-500/30 border border-teal-500/50 text-teal-100 text-sm whitespace-nowrap transition-all">
-                  Re-run
-                </button>
-              </div>
-            )}
-            {realStatus === 'error' && (
-              <p className="text-[13px] text-rose-300">Error: {realMessage}</p>
-            )}
-          </div>
-        )}
-
-        {mode === 'real' && !realPreds ? (
-          <p className="text-sm text-slate-500 text-center py-6">
-            {realStatus === 'idle' ? 'Click "Run on this image" above to get the real model\'s prediction.' : ''}
-          </p>
-        ) : (
-          <PredictionBars preds={showPreds} accent={mode === 'real' ? 'teal' : 'amber'} />
-        )}
       </Card>
     </div>
   );
