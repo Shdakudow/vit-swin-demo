@@ -3928,7 +3928,15 @@ function LiveDemoTab() {
       try {
         const out = await classifierRef.current(imgSrc, { topk: 5 });
         if (!canceled) {
-          setRealPreds(out);
+          // ImageNet labels come as comma-separated synonym lists like
+          // "tabby, tabby cat" or "lynx, catamount". Keep the first
+          // synonym, trimmed, and capitalize it for readability.
+          const cleaned = out.map(p => {
+            const first = String(p.label || '').split(',')[0].trim();
+            const label = first ? first[0].toUpperCase() + first.slice(1) : first;
+            return { ...p, label };
+          });
+          setRealPreds(cleaned);
           setModelStatus('ready');
         }
       } catch (err) {
