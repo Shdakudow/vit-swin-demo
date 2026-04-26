@@ -585,6 +585,42 @@ function PatchTab() {
   const canvasRef = useRef(null);
   const overlayRef = useRef(null);
   const SIZE = 256;
+  const D_DEMO = 12; // shown embedding dim (real ViT-Base is 768; 12 stays readable)
+
+  // Deterministic projection matrix E ∈ ℝ^(P²·3 × D), rebuilt only when patchSize changes.
+  const projE = useMemo(() => {
+    const inDim = patchSize * patchSize * 3;
+    const rng = mulberry32(7919);
+    return randMatrix(inDim, D_DEMO, rng);
+  }, [patchSize]);
+
+  // Read the hovered patch's pixels off the canvas and project to D dims.
+  const hoveredVector = useMemo(() => {
+    if (hoveredPatch === null || !canvasRef.current) return null;
+    const ctx = canvasRef.current.getContext('2d');
+    const grid = SIZE / patchSize;
+    const py = Math.floor(hoveredPatch / grid);
+    const px = hoveredPatch % grid;
+    let data;
+    try {
+      data = ctx.getImageData(px * patchSize, py * patchSize, patchSize, patchSize).data;
+    } catch {
+      return null;
+    }
+    const flat = new Float32Array(patchSize * patchSize * 3);
+    for (let i = 0; i < patchSize * patchSize; i++) {
+      flat[i * 3]     = data[i * 4]     / 255;
+      flat[i * 3 + 1] = data[i * 4 + 1] / 255;
+      flat[i * 3 + 2] = data[i * 4 + 2] / 255;
+    }
+    const out = new Float32Array(D_DEMO);
+    for (let d = 0; d < D_DEMO; d++) {
+      let s = 0;
+      for (let k = 0; k < flat.length; k++) s += flat[k] * projE.data[k * D_DEMO + d];
+      out[d] = s;
+    }
+    return { flat, embedding: out };
+  }, [hoveredPatch, patchSize, projE]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -708,38 +744,99 @@ function PatchTab() {
           </Card>
 
           <Card className="p-5">
-            <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-4">
-              What happens to one patch
+            <div className="flex items-baseline justify-between mb-3 flex-wrap gap-2">
+              <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/80">
+                What happens to {hoveredPatch !== null ? <>patch <span className="text-amber-300">#{hoveredPatch}</span></> : 'one patch'}
+              </div>
+              <span className="text-[10px] font-mono text-slate-500">
+                hover any patch on the image — numbers update live
+              </span>
             </div>
-            <div className="flex items-center gap-3 flex-wrap">
-              <div className="flex flex-col items-center gap-1">
-                <div className="w-16 h-16 rounded ring-1 ring-amber-500/40 overflow-hidden">
+
+            <div className="grid md:grid-cols-[110px_auto_1fr] gap-4 items-start">
+              {/* Step 1 — raw patch */}
+              <div className="text-center">
+                <div className="text-[10px] font-mono text-slate-500 mb-1">1 · raw patch</div>
+                <div className="w-[100px] h-[100px] rounded ring-1 ring-amber-500/40 overflow-hidden mx-auto">
                   <PatchThumb index={hoveredPatch ?? 0} patchSize={patchSize} grid={grid} />
                 </div>
-                <div className="text-[10px] font-mono text-slate-500">P × P × 3</div>
+                <div className="text-[10px] font-mono text-slate-500 mt-1">
+                  {patchSize}×{patchSize}×3
+                </div>
+                <div className="text-[10px] font-mono text-slate-400 mt-0.5">
+                  = {(patchSize * patchSize * 3).toLocaleString()} values
+                </div>
+                {hoveredVector && (
+                  <div className="mt-2">
+                    <div className="text-[9px] font-mono text-slate-500 mb-1">first 9 R,G,B:</div>
+                    <div className="grid grid-cols-3 gap-px text-[9px] font-mono text-slate-300 bg-slate-950 rounded p-1 border border-slate-800">
+                      {Array.from(hoveredVector.flat.slice(0, 27)).map((v, i) => (
+                        <div key={i} className={`text-center ${i % 3 === 0 ? 'text-rose-300' : i % 3 === 1 ? 'text-emerald-300' : 'text-sky-300'}`}>
+                          {v.toFixed(2)}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="text-[9px] font-mono text-slate-500 mt-1">
+                      …{(hoveredVector.flat.length - 27).toLocaleString()} more
+                    </div>
+                  </div>
+                )}
               </div>
-              <div className="text-amber-400/70 font-mono">→</div>
-              <div className="flex flex-col items-center gap-1">
-                <div className="px-3 py-1.5 rounded bg-slate-800/60 border border-slate-700 text-[11px] font-mono text-slate-300">flatten</div>
-                <div className="text-[10px] font-mono text-slate-500">vector ∈ ℝ^(P²·3)</div>
+
+              {/* Step 2 — flatten + ×E */}
+              <div className="flex flex-col items-center mt-6">
+                <div className="text-[10px] font-mono text-slate-500 mb-1">2 · flatten + ×E</div>
+                <div className="text-amber-400/70 font-mono text-2xl">→</div>
+                <div className="px-2.5 py-1 rounded bg-amber-500/15 border border-amber-500/40 text-[10px] font-mono text-amber-200 mt-1">
+                  × E
+                </div>
+                <div className="text-[9px] font-mono text-slate-500 mt-1 text-center leading-tight">
+                  E ∈ ℝ<sup>{patchSize*patchSize*3}×{D_DEMO}</sup>
+                  <br/>(learned)
+                </div>
               </div>
-              <div className="text-amber-400/70 font-mono">→</div>
-              <div className="flex flex-col items-center gap-1">
-                <div className="px-3 py-1.5 rounded bg-amber-500/15 border border-amber-500/40 text-[11px] font-mono text-amber-200">× E (linear)</div>
-                <div className="text-[10px] font-mono text-slate-500">learned matrix</div>
-              </div>
-              <div className="text-amber-400/70 font-mono">→</div>
-              <div className="flex flex-col items-center gap-1">
-                <div className="h-12 w-2 bg-gradient-to-b from-amber-400 via-rose-400 to-teal-400 rounded-sm shadow shadow-amber-500/30" title="D-dim patch embedding" />
-                <div className="text-[10px] font-mono text-slate-500">embedding ∈ ℝ^D</div>
+
+              {/* Step 3 — D-dim embedding with real numbers */}
+              <div>
+                <div className="text-[10px] font-mono text-slate-500 mb-1">
+                  3 · patch embedding · D = {D_DEMO} <span className="text-slate-600">(real ViT-Base uses 768)</span>
+                </div>
+                {hoveredVector ? (
+                  <div className="space-y-0.5 bg-slate-950 rounded p-2 border border-slate-800">
+                    {Array.from(hoveredVector.embedding).map((v, i) => {
+                      const t = Math.min(1, Math.abs(v) / 8);
+                      return (
+                        <div key={i} className="flex items-center gap-2 text-[10px] font-mono">
+                          <span className="text-slate-500 w-5 text-right">{i}</span>
+                          <div className="flex-1 h-2 bg-slate-800/80 rounded relative overflow-hidden">
+                            <div className="absolute top-0 bottom-0 w-px bg-slate-600" style={{ left: '50%' }}/>
+                            <div className="absolute top-0 bottom-0 transition-[width,left] duration-150" style={{
+                              left: v >= 0 ? '50%' : `${50 - t * 50}%`,
+                              width: `${t * 50}%`,
+                              background: v >= 0 ? 'rgba(245,158,11,0.85)' : 'rgba(20,184,166,0.85)',
+                            }}/>
+                          </div>
+                          <span className={`w-12 text-right ${v >= 0 ? 'text-amber-300' : 'text-teal-300'}`}>
+                            {v >= 0 ? '+' : ''}{v.toFixed(2)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-slate-500 italic text-center py-8 border border-dashed border-slate-700/50 rounded">
+                    Hover a patch on the image to compute its embedding →
+                  </div>
+                )}
               </div>
             </div>
-            <div className="text-[12px] text-slate-400 mt-4 leading-relaxed">
-              Every patch goes through the <em>same</em> linear projection — the matrix <Eq>E</Eq> is
-              shared across all N patches and is what the model learns. After this step we have N
-              embeddings of dimension D, ready to feed to the transformer. Hover a patch on the image
-              to see which one is being projected.
-            </div>
+
+            <p className="text-[12px] text-slate-400 mt-4 leading-relaxed">
+              Every patch follows the same path: flatten its {patchSize*patchSize*3} pixel values into a
+              vector, multiply by the same learned matrix <Eq>E</Eq>, get a {D_DEMO}-dim embedding (real
+              ViT-Base uses D = 768; we show 12 here for readability). Different patches → different
+              embeddings; same patch → identical embedding every time.
+            </p>
           </Card>
         </div>
       </div>
