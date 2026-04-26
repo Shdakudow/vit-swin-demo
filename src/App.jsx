@@ -245,16 +245,17 @@ function computePatchFeatures(canvas, patchSize, embedDim = 16, seed = 42) {
    Reusable UI atoms
    ========================================================= */
 
+/* Locked palette: amber = ViT / primary highlight, teal = Swin / cool data,
+   rose = [CLS] / specialness, slate = neutral. Removed violet. */
 const Tag = ({ children, color = 'amber' }) => {
   const palette = {
     amber: 'bg-amber-500/10 text-amber-300 border-amber-500/30',
     teal: 'bg-teal-500/10 text-teal-300 border-teal-500/30',
     rose: 'bg-rose-500/10 text-rose-300 border-rose-500/30',
     slate: 'bg-slate-500/10 text-slate-300 border-slate-500/30',
-    violet: 'bg-violet-500/10 text-violet-300 border-violet-500/30',
   };
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] font-mono tracking-wide ${palette[color]}`}>
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] font-mono tracking-wide ${palette[color] || palette.amber}`}>
       {children}
     </span>
   );
@@ -267,18 +268,16 @@ const Eq = ({ children }) => (
 );
 
 const Section = ({ icon: Icon, title, kicker, children }) => (
-  <section className="mb-12">
-    <div className="flex items-baseline gap-3 mb-1">
-      {kicker && (
-        <span className="font-mono text-[11px] tracking-[0.2em] text-amber-400/70 uppercase">
-          {kicker}
-        </span>
-      )}
-    </div>
-    <div className="flex items-center gap-3 mb-5">
+  <section className="mb-10">
+    {kicker && (
+      <div className="font-mono text-[11px] tracking-[0.2em] text-amber-400/80 uppercase mb-1">
+        {kicker}
+      </div>
+    )}
+    <div className="flex items-center gap-2.5 mb-4">
       {Icon && (
-        <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-amber-500/20 to-rose-500/10 border border-amber-500/30 flex items-center justify-center">
-          <Icon size={18} className="text-amber-300" />
+        <div className="w-8 h-8 rounded-md bg-amber-500/12 border border-amber-500/30 flex items-center justify-center shrink-0">
+          <Icon size={16} className="text-amber-300" />
         </div>
       )}
       <h2 className="text-2xl font-serif text-slate-100 tracking-tight">{title}</h2>
@@ -288,10 +287,60 @@ const Section = ({ icon: Icon, title, kicker, children }) => (
 );
 
 const Card = ({ children, className = '' }) => (
-  <div className={`bg-slate-900/60 border border-slate-700/60 rounded-xl backdrop-blur-sm ${className}`}>
+  <div className={`bg-slate-900/60 border border-slate-700/60 rounded-lg ${className}`}>
     {children}
   </div>
 );
+
+/* Takeaway — small end-of-tab summary box. Three slots:
+   "What you should now understand" (mandatory),
+   "Common confusion" (optional), and
+   "Try in the Live Demo" (optional, action-y). Standardises every
+   tab's wrap-up so reading the whole site has a real cadence. */
+function Takeaway({ understand = [], confusion = [], tryIt = '' }) {
+  return (
+    <Card className="p-5 mt-8">
+      <div className="grid sm:grid-cols-3 gap-5">
+        <div>
+          <div className="text-[10px] font-mono tracking-[0.2em] text-amber-400/80 uppercase mb-2">
+            What you should now understand
+          </div>
+          <ul className="space-y-1.5 text-[13px] text-slate-200 leading-snug">
+            {understand.map((u, i) => (
+              <li key={i} className="flex gap-2">
+                <span className="text-amber-400/70 shrink-0">·</span>
+                <span>{u}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+        {confusion.length > 0 && (
+          <div>
+            <div className="text-[10px] font-mono tracking-[0.2em] text-rose-400/80 uppercase mb-2">
+              Common confusion
+            </div>
+            <ul className="space-y-1.5 text-[13px] text-slate-300 leading-snug">
+              {confusion.map((c, i) => (
+                <li key={i} className="flex gap-2">
+                  <span className="text-rose-400/60 shrink-0">!</span>
+                  <span>{c}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {tryIt && (
+          <div>
+            <div className="text-[10px] font-mono tracking-[0.2em] text-teal-400/80 uppercase mb-2">
+              Try in the Live Demo
+            </div>
+            <p className="text-[13px] text-slate-300 leading-snug">{tryIt}</p>
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
 
 const Slider = ({ label, value, min, max, step = 1, onChange, suffix, options }) => (
   <div>
@@ -363,9 +412,8 @@ function OverviewTab() {
       </Section>
 
       <div className="grid md:grid-cols-2 gap-5">
-        <Card className="p-6 relative overflow-hidden">
-          <div className="absolute -top-20 -right-20 w-48 h-48 bg-amber-500/10 rounded-full blur-3xl" />
-          <div className="relative">
+        <Card className="p-5">
+          <div>
             <div className="flex items-center gap-2 mb-3">
               <Tag color="amber">ViT · 2020</Tag>
               <Tag color="slate">Dosovitskiy et al.</Tag>
@@ -393,9 +441,8 @@ function OverviewTab() {
           </div>
         </Card>
 
-        <Card className="p-6 relative overflow-hidden">
-          <div className="absolute -top-20 -right-20 w-48 h-48 bg-teal-500/10 rounded-full blur-3xl" />
-          <div className="relative">
+        <Card className="p-5">
+          <div>
             <div className="flex items-center gap-2 mb-3">
               <Tag color="teal">Swin · 2021</Tag>
               <Tag color="slate">Liu et al.</Tag>
@@ -424,7 +471,7 @@ function OverviewTab() {
         </Card>
       </div>
 
-      <Card className="p-6">
+      <Card className="p-5">
         <h3 className="font-serif text-lg text-slate-100 mb-4 flex items-center gap-2">
           <Workflow size={18} className="text-amber-300" /> What you'll explore
         </h3>
@@ -449,6 +496,15 @@ function OverviewTab() {
           ))}
         </div>
       </Card>
+
+      <Takeaway
+        understand={[
+          'ViT and Swin are two answers to the same question: how do you build an image model out of pure attention?',
+          'ViT keeps it simple — patches in, global attention, [CLS] out. Swin adds locality (windows) and a CNN-style feature pyramid.',
+        ]}
+        confusion={['"Newer" ≠ "better". The two papers optimize different things; choice depends on the task.']}
+        tryIt="Open the Live Demo and watch how each model attends to the same cat image — ViT's pattern is global, Swin's is windowed."
+      />
     </div>
   );
 }
@@ -623,6 +679,15 @@ function PatchTab() {
           </Card>
         </div>
       </div>
+
+      <Takeaway
+        understand={[
+          'Each P×P patch is flattened into a vector and projected to D dims by a single shared learned matrix E.',
+          'After patching you have a sequence of N = (H·W)/P² embeddings — exactly the shape a transformer wants.',
+        ]}
+        confusion={['Patches throw away spatial order. Position embeddings (next tab) put it back.']}
+        tryIt="Try patch size 16 vs 64. Smaller patches = more tokens = quadratically more attention compute."
+      />
     </div>
   );
 }
@@ -856,6 +921,15 @@ function PositionTab() {
           </p>
         </Card>
       </div>
+
+      <Takeaway
+        understand={[
+          'Self-attention is permutation-invariant — without position embeddings, top-left and bottom-right look the same to the model.',
+          '[CLS] is a learned vector prepended to the sequence; its final-layer output is what the classifier reads.',
+        ]}
+        confusion={['[CLS] is NOT a patch — it has no spatial location, only a learned embedding.']}
+        tryIt="Click between top-5 classes in the Live Demo — the heatmap shows where [CLS] gathered evidence for each."
+      />
     </div>
   );
 }
@@ -1097,7 +1171,7 @@ function AttentionTab() {
       </Section>
 
       {/* How to use — clear three-step instruction so the demo isn't a guessing game */}
-      <Card className="p-4 bg-amber-500/[0.04] border-amber-500/30">
+      <Card className="p-3 bg-amber-500/[0.04] border-amber-500/30">
         <div className="text-[11px] font-mono tracking-[0.2em] text-amber-400/80 uppercase mb-2">How to use this demo</div>
         <ol className="grid sm:grid-cols-3 gap-3 text-[13px] text-slate-200">
           <li className="flex gap-2">
@@ -1232,6 +1306,15 @@ function AttentionTab() {
           </Card>
         </div>
       </div>
+
+      <Takeaway
+        understand={[
+          'Attention(Q,K,V) = softmax(Q·Kᵀ/√d_k)·V — pairwise similarity, normalized, then weighted average of values.',
+          'One row of the attention matrix is one query patch\'s distribution over all key patches.',
+        ]}
+        confusion={['Step 2 (raw scores) is NOT a probability — they are signed and unbounded. Only after softmax (step 3) do they sum to 1.']}
+        tryIt="Click any patch and step through 1→5; the right-panel matrix shows different content per step."
+      />
     </div>
   );
 }
@@ -1543,6 +1626,15 @@ function MultiHeadTab() {
           </Card>
         </div>
       </div>
+
+      <Takeaway
+        understand={[
+          'Multi-head splits D-dim attention into h independent subspaces of size d_k = D/h, run in parallel.',
+          'Each head can specialize (color similarity, spatial proximity, texture, …) and their outputs are concatenated and projected by W_O.',
+        ]}
+        confusion={['More heads ≠ more compute per token. Total dimension D is split, not multiplied.']}
+        tryIt="Change the number of heads (1/2/4/8) and watch how each head\'s attention map differs from the others."
+      />
     </div>
   );
 }
@@ -1719,21 +1811,30 @@ function PipelineTab() {
         </div>
       </div>
 
-      <Card className="p-6">
+      <Card className="p-5">
         <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/70 mb-3">
           Stage {step + 1} · live data flow
         </div>
         <PipelineVisual step={step} />
       </Card>
 
-      <Card className="p-6 min-h-[200px]">
+      <Card className="p-5 min-h-[200px]">
         <PipelineDetail step={step} />
       </Card>
 
-      <Card className="p-6">
+      <Card className="p-5">
         <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-4">Inside one Transformer encoder block</div>
         <EncoderBlockDiagram />
       </Card>
+
+      <Takeaway
+        understand={[
+          'The full ViT forward pass: image → patches → linear embed → +CLS +pos → encoder × L → CLS → linear head → softmax.',
+          'L identical encoder blocks share architecture (LN → MSA → residual → LN → MLP → residual) but each has its own learned weights.',
+        ]}
+        confusion={['"Encoder × L" doesn\'t mean L different layer types — it means L copies of the same block, stacked.']}
+        tryIt="Step through stages 1→7 and watch the tensor shape evolve from image to logits."
+      />
     </div>
   );
 }
@@ -2256,6 +2357,15 @@ function WindowTab() {
           </Card>
         </div>
       </div>
+
+      <Takeaway
+        understand={[
+          'Swin partitions patches into non-overlapping M×M windows; attention only operates inside each window.',
+          'Cost drops from O(N²) (ViT) to O(M² · N) — linear in the number of patches, fixed per-window cost.',
+        ]}
+        confusion={['Windows ≠ patches. Each window contains many patches; M is the window size.']}
+        tryIt="Compare ViT and Swin matrices in the Live Demo — Swin\'s is block-diagonal, ViT\'s is dense."
+      />
     </div>
   );
 }
@@ -2429,7 +2539,7 @@ x = torch.roll(x, shifts=(M//2, M//2), dims=(1,2))`}</pre>
         </Card>
       </div>
 
-      <Card className="p-6">
+      <Card className="p-5">
         <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-4">Receptive field growth</div>
         <div className="grid grid-cols-4 gap-3">
           {[
@@ -2462,6 +2572,15 @@ x = torch.roll(x, shifts=(M//2, M//2), dims=(1,2))`}</pre>
           ))}
         </div>
       </Card>
+
+      <Takeaway
+        understand={[
+          'Swin alternates W-MSA (regular windows) with SW-MSA (windows shifted by ⌊M/2⌋, ⌊M/2⌋).',
+          'After two layers, every patch has effectively communicated with everything in a 2M×2M region — global reasoning at linear cost.',
+        ]}
+        confusion={['Shifting doesn\'t increase compute. The cyclic-shift + masking trick keeps the kernel identical to W-MSA.']}
+        tryIt="Toggle between regular and shifted layers and watch which patches share a window."
+      />
     </div>
   );
 }
@@ -2543,10 +2662,19 @@ function HierarchyTab() {
         </div>
       </div>
 
-      <Card className="p-6">
+      <Card className="p-5">
         <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-4">Full Swin-T architecture flow</div>
         <SwinFlow stages={stages} highlight={stage} />
       </Card>
+
+      <Takeaway
+        understand={[
+          'Patch merging concatenates 2×2 neighbor patches (4C channels) and projects back to 2C — resolution halves, channels double.',
+          'After 4 stages Swin produces a CNN-style feature pyramid (56×56 → 28×28 → 14×14 → 7×7), which is what dense prediction heads expect.',
+        ]}
+        confusion={['ViT keeps a single resolution throughout. Hierarchy is what makes Swin a usable backbone for detection / segmentation.']}
+        tryIt="No interactive analog in the Live Demo (it stays at one stage). The flow diagram on this tab is the demo."
+      />
     </div>
   );
 }
@@ -2816,7 +2944,7 @@ function CompareTab() {
         </Card>
       </div>
 
-      <Card className="p-6">
+      <Card className="p-5">
         <h3 className="font-serif text-lg text-slate-100 mb-4">Quick reference — ViT-B vs Swin-T</h3>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -2852,6 +2980,15 @@ function CompareTab() {
           ViT-Base improves substantially with JFT-300M pretraining.
         </div>
       </Card>
+
+      <Takeaway
+        understand={[
+          'ViT: pure global attention, conceptually clean, scales beautifully with data and compute, single resolution.',
+          'Swin: local windows + shifting + hierarchical merging — linear cost, multi-scale features, better default for dense prediction.',
+        ]}
+        confusion={['"Better" depends on the task. ViT wins big on huge-data classification; Swin wins on detection / segmentation at modest data.']}
+        tryIt="Crank up the image size in the cost calculator and watch ViT FLOPs explode quadratically while Swin stays linear."
+      />
     </div>
   );
 }
@@ -4026,6 +4163,50 @@ const TABS = [
   { id: 'quiz',     label: 'Practice',        icon: HelpCircle },
 ];
 
+/* TabNav — previous / next strip rendered at the bottom of every tab.
+   Turns the 12 isolated panels into a real reading path. */
+function TabNav({ tab, setTab }) {
+  const idx = TABS.findIndex(t => t.id === tab);
+  if (idx < 0) return null;
+  const prev = idx > 0 ? TABS[idx - 1] : null;
+  const next = idx < TABS.length - 1 ? TABS[idx + 1] : null;
+  return (
+    <div className="mt-10 pt-5 border-t border-slate-800/60">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        {prev ? (
+          <button
+            onClick={() => { setTab(prev.id); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+            className="group flex items-center gap-2 px-3 py-2 rounded-md border border-slate-700/60 hover:border-amber-500/50 bg-slate-900/40 hover:bg-amber-500/5 transition-all"
+          >
+            <span className="text-amber-400/70 group-hover:text-amber-300">←</span>
+            <div className="text-left">
+              <div className="text-[10px] font-mono uppercase tracking-wider text-slate-500">Previous</div>
+              <div className="text-sm text-slate-200 group-hover:text-amber-200">{prev.label}</div>
+            </div>
+          </button>
+        ) : <div/>}
+
+        <div className="text-[11px] font-mono text-slate-500">
+          {idx + 1} / {TABS.length}
+        </div>
+
+        {next ? (
+          <button
+            onClick={() => { setTab(next.id); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+            className="group flex items-center gap-2 px-3 py-2 rounded-md border border-slate-700/60 hover:border-amber-500/50 bg-slate-900/40 hover:bg-amber-500/5 transition-all"
+          >
+            <div className="text-right">
+              <div className="text-[10px] font-mono uppercase tracking-wider text-slate-500">Next</div>
+              <div className="text-sm text-slate-200 group-hover:text-amber-200">{next.label}</div>
+            </div>
+            <span className="text-amber-400/70 group-hover:text-amber-300">→</span>
+          </button>
+        ) : <div/>}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [tab, setTab] = useState('live');
 
@@ -4048,19 +4229,8 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen text-slate-200 font-sans relative overflow-x-hidden"
-      style={{
-        background:
-          'radial-gradient(ellipse at top right, rgba(245,158,11,0.08), transparent 50%), ' +
-          'radial-gradient(ellipse at bottom left, rgba(20,184,166,0.06), transparent 50%), ' +
-          '#0a0e1a',
-      }}>
-      {/* subtle grain */}
-      <div className="fixed inset-0 pointer-events-none opacity-[0.03] mix-blend-overlay"
-        style={{
-          backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`,
-        }}
-      />
+    <div className="min-h-screen text-slate-200 font-sans relative overflow-x-hidden bg-slate-950"
+      style={{ background: '#0a0e1a' }}>
 
       {/* Header */}
       <header className="relative border-b border-slate-800/60 backdrop-blur-md bg-slate-950/40">
@@ -4127,6 +4297,7 @@ export default function App() {
       {/* Content */}
       <main className="max-w-7xl mx-auto px-6 py-10 relative">
         {render()}
+        <TabNav tab={tab} setTab={setTab} />
       </main>
 
       {/* Footer */}
