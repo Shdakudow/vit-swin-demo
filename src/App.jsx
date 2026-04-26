@@ -393,6 +393,66 @@ const Toggle = ({ label, value, onChange }) => (
    TAB 1 — Overview
    ========================================================= */
 
+function OverviewCostDemo() {
+  const [side, setSide] = useState(384);
+  const P = 16, M = 7;
+  const N = Math.round((side / P) ** 2);
+  const vitCost = N * N;
+  const swinCost = N * M * M;
+  const max = Math.max(vitCost, swinCost);
+  const ratio = vitCost / Math.max(1, swinCost);
+  const fmt = (v) => v >= 1e6 ? `${(v / 1e6).toFixed(1)} M` : v >= 1e3 ? `${(v / 1e3).toFixed(1)} K` : `${v}`;
+
+  return (
+    <Card className="p-5">
+      <div className="flex items-baseline justify-between gap-2 mb-4 flex-wrap">
+        <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/80">
+          Try this · why locality matters
+        </div>
+        <span className="text-[10px] font-mono text-slate-500">push the slider →</span>
+      </div>
+      <div className="grid md:grid-cols-[200px_1fr] gap-5 items-center">
+        <div>
+          <Slider
+            label="Image side (px)"
+            value={side}
+            options={[224, 384, 512, 768, 1024, 1536]}
+            onChange={setSide}
+          />
+          <div className="mt-3 text-[12px] font-mono leading-relaxed">
+            <div className="text-slate-400">P = 16 px · M = 7</div>
+            <div className="text-amber-300 mt-1">N = {N.toLocaleString()} patches</div>
+          </div>
+        </div>
+        <div className="space-y-3">
+          <div>
+            <div className="flex justify-between text-[11px] font-mono mb-1">
+              <span className="text-amber-300">ViT · O(N²) attention pairs</span>
+              <span className="text-amber-200">{fmt(vitCost)}</span>
+            </div>
+            <div className="h-3 bg-slate-800 rounded overflow-hidden">
+              <div className="h-full bg-amber-400 transition-all duration-300" style={{ width: `${(vitCost / max) * 100}%` }}/>
+            </div>
+          </div>
+          <div>
+            <div className="flex justify-between text-[11px] font-mono mb-1">
+              <span className="text-teal-300">Swin · O(M²·N) attention pairs</span>
+              <span className="text-teal-200">{fmt(swinCost)}</span>
+            </div>
+            <div className="h-3 bg-slate-800 rounded overflow-hidden">
+              <div className="h-full bg-teal-400 transition-all duration-300" style={{ width: `${(swinCost / max) * 100}%` }}/>
+            </div>
+          </div>
+          <div className="pt-2 mt-1 border-t border-slate-800 text-[12px] text-slate-400 leading-snug">
+            ViT does <span className="text-amber-300 font-medium">{ratio < 10 ? ratio.toFixed(1) : Math.round(ratio).toLocaleString()}×</span> the
+            pairwise attention work of Swin at this resolution. Push to 1024+ and the gap is what kills ViT for high-res tasks.
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function OverviewTab() {
   return (
     <div className="space-y-8">
@@ -496,6 +556,10 @@ function OverviewTab() {
           ))}
         </div>
       </Card>
+
+      {/* Live "why locality matters" cost slider — primes the rest of the
+          tabs by making the quadratic-vs-linear gap visceral up front. */}
+      <OverviewCostDemo />
 
       <Takeaway
         understand={[
@@ -2232,6 +2296,7 @@ function EncoderBlockDiagram() {
 function WindowTab() {
   const [winSize, setWinSize] = useState(2);
   const [hoveredWindow, setHoveredWindow] = useState(null);
+  const [selectedPatch, setSelectedPatch] = useState(null);
   const GRID = 8; // 8×8 patches
   const cell = 36;
 
@@ -2241,6 +2306,17 @@ function WindowTab() {
   // Compute complexity savings
   const fullCost = (GRID * GRID) ** 2; // O(N²)
   const windowCost = numWindows * (winSize * winSize) ** 2;
+
+  // For the click-a-query interaction
+  const queryWindow = selectedPatch == null
+    ? null
+    : (() => {
+        const px = selectedPatch % GRID, py = Math.floor(selectedPatch / GRID);
+        const wx = Math.floor(px / winSize), wy = Math.floor(py / winSize);
+        return wy * numWindowsSide + wx;
+      })();
+  const peersInWindow = winSize * winSize - 1;
+  const peersInViT = GRID * GRID - 1;
 
   return (
     <div className="space-y-8">
@@ -2270,21 +2346,40 @@ function WindowTab() {
               const wx = Math.floor(px / winSize), wy = Math.floor(py / winSize);
               const wIdx = wy * numWindowsSide + wx;
               const isHover = hoveredWindow === wIdx;
+              const isQuery = selectedPatch === i;
+              const isWindowmate = selectedPatch !== null && wIdx === queryWindow && !isQuery;
               const hue = (wIdx * 360 / numWindows) % 360;
+              const fillOpacity = isHover || isWindowmate ? 0.45 : 0.18;
               return (
                 <g key={i}>
                   <rect
                     x={px * cell + 1} y={py * cell + 1}
                     width={cell - 2} height={cell - 2}
                     rx={3}
-                    fill={`hsla(${hue}, 60%, 50%, ${isHover ? 0.45 : 0.18})`}
-                    stroke={`hsla(${hue}, 70%, 60%, ${isHover ? 0.9 : 0.4})`}
-                    strokeWidth={isHover ? 1.5 : 0.6}
+                    fill={`hsla(${hue}, 60%, 50%, ${fillOpacity})`}
+                    stroke={`hsla(${hue}, 70%, 60%, ${isHover || isWindowmate ? 0.9 : 0.4})`}
+                    strokeWidth={isHover || isWindowmate ? 1.5 : 0.6}
+                    onClick={() => setSelectedPatch(prev => prev === i ? null : i)}
+                    onMouseEnter={() => setHoveredWindow(wIdx)}
+                    onMouseLeave={() => setHoveredWindow(null)}
+                    style={{ cursor: 'pointer' }}
                   />
                   <text x={px * cell + cell / 2} y={py * cell + cell / 2 + 4}
-                    textAnchor="middle" fontFamily="monospace" fontSize="10" fill="#cbd5e1">
+                    textAnchor="middle" fontFamily="monospace" fontSize="10" fill="#cbd5e1"
+                    style={{ pointerEvents: 'none' }}>
                     {i}
                   </text>
+                  {isQuery && (
+                    <rect
+                      x={px * cell + 1} y={py * cell + 1}
+                      width={cell - 2} height={cell - 2}
+                      rx={3}
+                      fill="transparent"
+                      stroke="#f43f5e"
+                      strokeWidth={2}
+                      style={{ pointerEvents: 'none' }}
+                    />
+                  )}
                 </g>
               );
             })}
@@ -2298,25 +2393,48 @@ function WindowTab() {
                     x={wx * winSize * cell} y={wy * winSize * cell}
                     width={winSize * cell} height={winSize * cell}
                     fill="transparent"
-                    stroke={hoveredWindow === wIdx ? '#5eead4' : '#14b8a6'}
-                    strokeWidth={hoveredWindow === wIdx ? 3 : 1.5}
+                    stroke={hoveredWindow === wIdx || queryWindow === wIdx ? '#5eead4' : '#14b8a6'}
+                    strokeWidth={hoveredWindow === wIdx || queryWindow === wIdx ? 3 : 1.5}
                     onMouseEnter={() => setHoveredWindow(wIdx)}
                     onMouseLeave={() => setHoveredWindow(null)}
-                    style={{ cursor: 'pointer' }}
+                    style={{ cursor: 'pointer', pointerEvents: 'none' }}
                   />
                 );
               })
             )}
           </svg>
           <div className="mt-4">
-            <Slider label="Window size M" value={winSize} options={[1, 2, 4, 8]} onChange={setWinSize} />
+            <Slider label="Window size M" value={winSize} options={[1, 2, 4, 8]} onChange={(v) => { setWinSize(v); setSelectedPatch(null); }} />
           </div>
-          <div className="mt-3 text-[11px] text-slate-500 italic">
-            Hover a window to highlight it. Same color = same window. Each window does its own self-attention independently.
+          <div className="mt-3 text-[11px] text-slate-400 italic leading-snug">
+            <span className="text-amber-300">Click a patch</span> to make it the query — its windowmates light up.
+            Hover a window to preview.
           </div>
         </Card>
 
         <div className="space-y-4">
+          {selectedPatch !== null && (
+            <Card className="p-5 border-amber-500/40 bg-amber-500/[0.04]">
+              <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/80 mb-2">
+                Query patch #{selectedPatch}
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-[13px]">
+                <div>
+                  <div className="text-teal-300 font-mono text-[11px]">Swin (this layer)</div>
+                  <div className="text-slate-100 font-serif text-2xl">{peersInWindow}</div>
+                  <div className="text-slate-500 text-[11px]">peers in window of M={winSize}</div>
+                </div>
+                <div>
+                  <div className="text-rose-300 font-mono text-[11px]">ViT (same layer)</div>
+                  <div className="text-slate-100 font-serif text-2xl">{peersInViT}</div>
+                  <div className="text-slate-500 text-[11px]">peers (every other patch)</div>
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-400 italic mt-3 leading-snug">
+                Swin trades reach for cost. The <em>shifted windows</em> tab shows how it claws that reach back.
+              </p>
+            </Card>
+          )}
           <Card className="p-5">
             <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-3">Cost comparison</div>
             <div className="grid grid-cols-2 gap-4">
@@ -2378,6 +2496,7 @@ function ShiftedTab() {
   const [layer, setLayer] = useState(0); // 0 = W-MSA, 1 = SW-MSA
   const [auto, setAuto] = useState(false);
   const [showCyclic, setShowCyclic] = useState(false);
+  const [selectedPatch, setSelectedPatch] = useState(null);
   const GRID = 8;
   const M = 4; // window size
   const shift = M / 2; // 2
@@ -2455,21 +2574,41 @@ function ShiftedTab() {
               const wHash = String(w);
               let h = 0;
               for (let k = 0; k < wHash.length; k++) h = (h * 31 + wHash.charCodeAt(k)) % 360;
+              const isQuery = selectedPatch === i;
+              // Determine if this patch shares a window with the selected query.
+              const queryWin = selectedPatch == null
+                ? null
+                : windowOf(selectedPatch % GRID, Math.floor(selectedPatch / GRID), layer === 1);
+              const isPeer = !isQuery && queryWin != null && String(w) === String(queryWin);
+              const fillAlpha = isQuery ? 0.55 : isPeer ? 0.55 : selectedPatch == null ? 0.25 : 0.10;
               return (
                 <g key={i} style={{ transition: 'all 0.5s ease' }}>
                   <rect
                     x={px * cell + 1} y={py * cell + 1}
                     width={cell - 2} height={cell - 2}
                     rx={3}
-                    fill={`hsla(${h}, 60%, 50%, 0.25)`}
-                    stroke={`hsla(${h}, 70%, 60%, 0.7)`}
-                    strokeWidth={0.8}
-                    style={{ transition: 'all 0.5s ease' }}
+                    fill={`hsla(${h}, 60%, 50%, ${fillAlpha})`}
+                    stroke={`hsla(${h}, 70%, 60%, ${isPeer || isQuery ? 0.95 : 0.5})`}
+                    strokeWidth={isPeer || isQuery ? 1.4 : 0.8}
+                    onClick={() => setSelectedPatch(prev => prev === i ? null : i)}
+                    style={{ transition: 'all 0.5s ease', cursor: 'pointer' }}
                   />
                   <text x={px * cell + cell / 2} y={py * cell + cell / 2 + 4}
-                    textAnchor="middle" fontFamily="monospace" fontSize="10" fill="#cbd5e1">
+                    textAnchor="middle" fontFamily="monospace" fontSize="10" fill="#cbd5e1"
+                    style={{ pointerEvents: 'none' }}>
                     {i}
                   </text>
+                  {isQuery && (
+                    <rect
+                      x={px * cell + 1} y={py * cell + 1}
+                      width={cell - 2} height={cell - 2}
+                      rx={3}
+                      fill="transparent"
+                      stroke="#f43f5e"
+                      strokeWidth={2}
+                      style={{ pointerEvents: 'none' }}
+                    />
+                  )}
                 </g>
               );
             })}
@@ -2498,9 +2637,54 @@ function ShiftedTab() {
               </>
             )}
           </svg>
-          <div className="mt-3 text-[11px] text-slate-500 italic">
-            Same color = same window in this layer. Watch how patches change neighborhoods between W-MSA and SW-MSA.
+          <div className="mt-3 text-[11px] text-slate-400 italic leading-snug">
+            <span className="text-amber-300">Click any patch</span> to fix it as the query. Toggle layers above
+            and watch its windowmates change.
           </div>
+          {selectedPatch !== null && (() => {
+            const px = selectedPatch % GRID, py = Math.floor(selectedPatch / GRID);
+            const wReg = windowOf(px, py, false);
+            const wShifted = windowOf(px, py, true);
+            // Count peers in each layer
+            let peersReg = 0, peersShifted = 0;
+            for (let i = 0; i < GRID * GRID; i++) {
+              if (i === selectedPatch) continue;
+              const ipx = i % GRID, ipy = Math.floor(i / GRID);
+              if (String(windowOf(ipx, ipy, false)) === String(wReg)) peersReg++;
+              if (String(windowOf(ipx, ipy, true)) === String(wShifted)) peersShifted++;
+            }
+            // Count "newly visible" peers — those that share a window in shifted but NOT in regular
+            let newlyVisible = 0;
+            for (let i = 0; i < GRID * GRID; i++) {
+              if (i === selectedPatch) continue;
+              const ipx = i % GRID, ipy = Math.floor(i / GRID);
+              const peerWReg = String(windowOf(ipx, ipy, false));
+              const peerWSh = String(windowOf(ipx, ipy, true));
+              if (peerWSh === String(wShifted) && peerWReg !== String(wReg)) newlyVisible++;
+            }
+            return (
+              <div className="mt-3 p-3 rounded border border-amber-500/40 bg-amber-500/[0.04]">
+                <div className="text-[10px] font-mono uppercase tracking-wider text-amber-400/80 mb-2">
+                  Query patch #{selectedPatch}
+                </div>
+                <div className="grid grid-cols-2 gap-3 text-[12px]">
+                  <div>
+                    <div className="text-amber-300 font-mono text-[10px]">In W-MSA (this layer = {layer === 0 ? 'now' : 'before shift'})</div>
+                    <div className="text-slate-100 font-serif text-xl mt-0.5">{peersReg}</div>
+                    <div className="text-slate-500 text-[10px]">peers in window</div>
+                  </div>
+                  <div>
+                    <div className="text-teal-300 font-mono text-[10px]">In SW-MSA (this layer = {layer === 1 ? 'now' : 'after shift'})</div>
+                    <div className="text-slate-100 font-serif text-xl mt-0.5">{peersShifted}</div>
+                    <div className="text-slate-500 text-[10px]">peers in window</div>
+                  </div>
+                </div>
+                <div className="mt-2 text-[11px] text-slate-300 leading-snug">
+                  After the shift, this query meets <span className="text-amber-300 font-medium">{newlyVisible}</span> patches it never saw before — that's how info crosses old window boundaries.
+                </div>
+              </div>
+            );
+          })()}
         </Card>
 
         <Card className="p-5">
@@ -2659,6 +2843,13 @@ function HierarchyTab() {
               The number of tokens drops by 4×; the channel dimension doubles.
             </div>
           </Card>
+
+          <Card className="p-5">
+            <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/80 mb-3">
+              Try it · hover a merged patch to see its 4 sources
+            </div>
+            <PatchMergePlayground />
+          </Card>
         </div>
       </div>
 
@@ -2713,6 +2904,81 @@ function ResolutionViz({ stage }) {
         <div className="absolute -bottom-7 left-1/2 -translate-x-1/2 font-mono text-[12px] text-amber-300">
           {size} × {size} = {size * size} tokens
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* PatchMergePlayground — hover any merged "M" patch to see which 4
+   pre-merge patches went into it. Concrete demonstration that one
+   post-merge patch is a learned blend of a 2×2 neighborhood. */
+function PatchMergePlayground() {
+  const [hover, setHover] = useState(null);
+  return (
+    <div className="flex items-center justify-center gap-5 flex-wrap">
+      {/* Before: 4×4 grid of patches */}
+      <div>
+        <div className="text-[10px] font-mono text-slate-400 mb-1.5 text-center">before · 4×4</div>
+        <div className="grid grid-cols-4 gap-0.5 p-1 rounded bg-slate-950 border border-slate-800">
+          {Array.from({ length: 16 }).map((_, i) => {
+            const px = i % 4, py = (i / 4) | 0;
+            const gx = (px / 2) | 0, gy = (py / 2) | 0;
+            const groupId = gy * 2 + gx;
+            const isHi = hover === groupId;
+            const hue = (groupId * 90) % 360;
+            return (
+              <div
+                key={i}
+                className={`w-9 h-9 rounded-sm flex items-center justify-center font-mono text-[10px] transition-all
+                  ${isHi ? 'ring-2 ring-amber-300 z-10 scale-105' : 'ring-1 ring-slate-700/40'}`}
+                style={{
+                  background: `hsla(${hue + (i % 4) * 12}, ${isHi ? 70 : 45}%, 50%, ${isHi ? 0.75 : 0.30})`,
+                  color: isHi ? '#fefefe' : 'rgba(203,213,225,0.7)',
+                }}
+              >
+                {i}
+              </div>
+            );
+          })}
+        </div>
+        <div className="text-[10px] font-mono text-slate-500 mt-1.5 text-center">N = 16 · C dims</div>
+      </div>
+
+      {/* Arrow + math caption */}
+      <div className="flex flex-col items-center">
+        <div className="text-amber-400/70 font-mono text-2xl">→</div>
+        <div className="text-[9px] font-mono text-slate-500 mt-1 text-center leading-snug">
+          concat 4·C<br/>LayerNorm<br/>Linear → 2C
+        </div>
+      </div>
+
+      {/* After: 2×2 merged patches */}
+      <div>
+        <div className="text-[10px] font-mono text-slate-400 mb-1.5 text-center">after · 2×2</div>
+        <div className="grid grid-cols-2 gap-1 p-1 rounded bg-slate-950 border border-slate-800">
+          {Array.from({ length: 4 }).map((_, gi) => {
+            const isHi = hover === gi;
+            const hue = (gi * 90) % 360;
+            return (
+              <button
+                key={gi}
+                onMouseEnter={() => setHover(gi)}
+                onMouseLeave={() => setHover(null)}
+                onFocus={() => setHover(gi)}
+                onBlur={() => setHover(null)}
+                className={`w-[78px] h-[78px] rounded-sm flex items-center justify-center font-mono text-[12px] transition-all cursor-pointer
+                  ${isHi ? 'ring-2 ring-amber-300 z-10 scale-105' : 'ring-1 ring-slate-700/40'}`}
+                style={{
+                  background: `hsla(${hue}, ${isHi ? 70 : 50}%, 50%, ${isHi ? 0.75 : 0.30})`,
+                  color: isHi ? '#fefefe' : 'rgba(203,213,225,0.85)',
+                }}
+              >
+                merged {gi}
+              </button>
+            );
+          })}
+        </div>
+        <div className="text-[10px] font-mono text-slate-500 mt-1.5 text-center">N = 4 · 2C dims</div>
       </div>
     </div>
   );
