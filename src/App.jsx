@@ -4288,18 +4288,23 @@ function LiveDemoTab() {
   const [swinPinned, setSwinPinned] = useState(null);
 
   // ----- Race-mode bookkeeping -----
-  // Both scans operate at the same op-rate. ViT does N ops/patch; Swin does
-  // M² ops/patch. So Swin's whole scan is ~N/M² times faster — at the same
-  // wall-clock progress, Swin finishes much earlier on the canvas. This is
-  // the visual "why Swin is faster" answer.
+  // Both scans operate at the same op-rate; ViT does N ops/patch and Swin
+  // does M² ops/patch, so the *true* speedup is N/M² (often 6×–10×).
+  // For the on-canvas race that ratio is too dramatic — Swin would finish
+  // in the first 15% of progress while ViT is still warming up. So we cap
+  // the visual speedup at a more readable value while keeping the ops
+  // counters honest about the true ratio.
   const SCAN_SIZE = 360;
   const SCAN_GRID = Math.max(2, Math.floor(SCAN_SIZE / patchSize));
   const SCAN_N = SCAN_GRID * SCAN_GRID;
   const SCAN_M = 4;
-  const SWIN_SPEEDUP = Math.max(1, (SCAN_N - 1) / (SCAN_M * SCAN_M - 1));
+  const SWIN_TRUE_SPEEDUP = Math.max(1, (SCAN_N - 1) / (SCAN_M * SCAN_M - 1));
+  const SWIN_VISUAL_SPEEDUP = Math.min(2.4, SWIN_TRUE_SPEEDUP); // race finishes around 40% of progress
   const vitProgress = progress;
-  const swinProgress = Math.min(1, progress * SWIN_SPEEDUP);
-  // Live ops counters — both at the same op-rate; Swin caps out at its own total.
+  const swinProgress = Math.min(1, progress * SWIN_VISUAL_SPEEDUP);
+  // Live ops counters — keep the *true* op ratio so the numbers reflect
+  // the actual work difference (the ratio shown in the headers is 6×+
+  // even though the visual race only shows ~2× faster).
   const vitTotalOps = SCAN_N * (SCAN_N - 1);
   const swinTotalOps = SCAN_N * (SCAN_M * SCAN_M - 1);
   const absOps = Math.floor(progress * vitTotalOps);
