@@ -3872,46 +3872,6 @@ function ClassContribution({ image, attentionRows, gridN, preds, status, statusM
   );
 }
 
-/* HoverAttnReadout — shown in place of the static caption while a patch
-   on the scan canvas is hovered. Lists the top-5 patches the hovered
-   query attends to, with real percentages from the precomputed
-   attention matrix. */
-function HoverAttnReadout({ idx, attn, mode }) {
-  if (idx == null || !attn || !attn[idx]) return null;
-  const row = attn[idx];
-  const sorted = [];
-  for (let i = 0; i < row.length; i++) sorted.push({ i, w: row[i] });
-  sorted.sort((a, b) => b.w - a.w);
-  const top = sorted.slice(0, 5).filter(o => o.w > 0.001);
-  const accent = mode === 'vit' ? 'text-amber-300' : 'text-teal-300';
-  return (
-    <div className="font-mono text-[10px] leading-tight">
-      <div className="text-slate-300">Patch #{idx} · top attends to:</div>
-      <div className="flex flex-wrap gap-x-2 gap-y-0.5 mt-0.5">
-        {top.length === 0
-          ? <span className="text-slate-500">no peers (masked)</span>
-          : top.map(({ i, w }) => (
-              <span key={i} className="text-slate-400">
-                #{i} <span className={accent}>{(w * 100).toFixed(0)}%</span>
-              </span>
-            ))}
-      </div>
-    </div>
-  );
-}
-
-/* Helper: map a canvas mousemove event to a matrix-grid index (0..MAT_N²-1). */
-function canvasToMatIdx(e, canvas) {
-  if (!canvas) return null;
-  const rect = canvas.getBoundingClientRect();
-  if (rect.width === 0 || rect.height === 0) return null;
-  const x = (e.clientX - rect.left) / rect.width;
-  const y = (e.clientY - rect.top) / rect.height;
-  const mx = Math.min(MAT_N - 1, Math.max(0, Math.floor(x * MAT_N)));
-  const my = Math.min(MAT_N - 1, Math.max(0, Math.floor(y * MAT_N)));
-  return my * MAT_N + mx;
-}
-
 /* SwinStages — four side-by-side thumbnails of the same image rendered at
    each Swin stage's grid resolution (56→28→14→7). Visualises how patch
    merging coarsens the spatial map while channels grow. Uses pixelated
@@ -3967,10 +3927,6 @@ function LiveDemoTab() {
   // Swin-only layer toggle: 0 = W-MSA (regular), 1 = SW-MSA (shifted by ⌊M/2⌋).
   // Demonstrates the key Swin innovation directly inside the Live Demo.
   const [swinLayer, setSwinLayer] = useState(0);
-  // Hover-to-readout: which patch is the cursor over on each scan canvas
-  // (matrix index 0..MAT_N²−1, or null for "not hovering").
-  const [vitHover, setVitHover] = useState(null);
-  const [swinHover, setSwinHover] = useState(null);
 
   // Real classifier — runs ViT-Base/16 in the browser via transformers.js.
   // Loads the ONNX weights once on mount (~88 MB, cached by the browser),
@@ -4163,25 +4119,16 @@ function LiveDemoTab() {
           <div className="grid grid-cols-2 gap-2">
             <div>
               <div className="text-[10px] font-mono text-slate-500 uppercase mb-0.5">scan</div>
-              <canvas
-                ref={vitRef}
-                className="w-full rounded bg-slate-950 aspect-square cursor-crosshair"
-                onMouseMove={(e) => setVitHover(canvasToMatIdx(e, vitRef.current))}
-                onMouseLeave={() => setVitHover(null)}
-              />
+              <canvas ref={vitRef} className="w-full rounded bg-slate-950 aspect-square"/>
             </div>
             <div>
               <div className="text-[10px] font-mono text-slate-500 uppercase mb-0.5">matrix</div>
               <canvas ref={vitMatRef} className="w-full rounded bg-slate-950 aspect-square"/>
             </div>
           </div>
-          <div className="mt-2 min-h-[28px]">
-            {vitHover != null && attnRef.current?.vit
-              ? <HoverAttnReadout idx={vitHover} attn={attnRef.current.vit} mode="vit"/>
-              : <p className="text-[10px] text-slate-400 leading-snug">
-                  Every patch attends to every other · dense matrix. <span className="text-slate-500">Hover a patch to see its top peers.</span>
-                </p>}
-          </div>
+          <p className="text-[10px] text-slate-400 mt-2 leading-snug">
+            Every patch attends to every other · dense matrix.
+          </p>
         </Card>
 
         <Card className="p-3">
@@ -4212,27 +4159,18 @@ function LiveDemoTab() {
           <div className="grid grid-cols-2 gap-2">
             <div>
               <div className="text-[10px] font-mono text-slate-500 uppercase mb-0.5">scan</div>
-              <canvas
-                ref={swinRef}
-                className="w-full rounded bg-slate-950 aspect-square cursor-crosshair"
-                onMouseMove={(e) => setSwinHover(canvasToMatIdx(e, swinRef.current))}
-                onMouseLeave={() => setSwinHover(null)}
-              />
+              <canvas ref={swinRef} className="w-full rounded bg-slate-950 aspect-square"/>
             </div>
             <div>
               <div className="text-[10px] font-mono text-slate-500 uppercase mb-0.5">matrix</div>
               <canvas ref={swinMatRef} className="w-full rounded bg-slate-950 aspect-square"/>
             </div>
           </div>
-          <div className="mt-2 min-h-[28px]">
-            {swinHover != null && attnRef.current?.swin
-              ? <HoverAttnReadout idx={swinHover} attn={attnRef.current.swin} mode="swin"/>
-              : <p className="text-[10px] text-slate-400 leading-snug">
-                  {swinLayer === 0
-                    ? <>Layer 1 · regular windows. <span className="text-slate-500">Hover a patch to see its windowmates.</span></>
-                    : <>Layer 2 · shifted by ⌊M/2⌋. <span className="text-slate-500">Hover a patch to see its new windowmates.</span></>}
-                </p>}
-          </div>
+          <p className="text-[10px] text-slate-400 mt-2 leading-snug">
+            {swinLayer === 0
+              ? <>Layer 1 · regular windows. Block-diagonal matrix; patches near a wall can't talk.</>
+              : <>Layer 2 · windows shifted by ⌊M/2⌋. Look at the scan — old neighbors are now in different windows. Across two layers, info crosses every wall.</>}
+          </p>
         </Card>
 
         {/* Swin · 4 stages of patch merging — fits in the 3rd column slot of
