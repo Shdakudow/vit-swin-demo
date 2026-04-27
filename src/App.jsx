@@ -3375,7 +3375,7 @@ const GALLERY = [
   { id: 'miaomiao', name: 'Miaomiao', src: import.meta.env.BASE_URL + 'miaomiao.jpg' },
 ];
 
-function drawScan(canvas, img, size, patchPx, progress, mode) {
+function drawScan(canvas, img, size, patchPx, progress, mode, shifted = false) {
   if (!canvas || !img) return;
   canvas.width = size;
   canvas.height = size;
@@ -3405,25 +3405,35 @@ function drawScan(canvas, img, size, patchPx, progress, mode) {
 
   if (mode === 'swin') {
     const winSize = 4;
-    const wins = Math.ceil(gridN / winSize);
+    const halfWin = shifted ? winSize / 2 : 0;
+    // Window membership respects the shift offset. Two patches are in
+    // the same window iff their (px+halfWin)/winSize floors agree.
+    const winOf = (px, py) => `${Math.floor((px + halfWin) / winSize)}_${Math.floor((py + halfWin) / winSize)}`;
+
+    // Window borders (offset by -halfWin so [0..M) becomes [-halfWin..winSize-halfWin) etc.)
     ctx.strokeStyle = `rgba(${baseColor}, 0.55)`;
     ctx.lineWidth = 2;
-    for (let i = 0; i <= wins; i++) {
-      const p = Math.min(i * winSize * patchPx, size);
+    const start = -halfWin;
+    for (let col = start; col <= gridN; col += winSize) {
+      if (col < 0 || col > gridN) continue;
+      const p = col * patchPx;
       ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, size); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(size, p); ctx.stroke();
     }
+
+    // Visited windows tint
     const visited = new Set();
     for (let i = 0; i < seen; i++) {
       const px = i % gridN;
       const py = Math.floor(i / gridN);
-      visited.add(Math.floor(py / winSize) * wins + Math.floor(px / winSize));
+      visited.add(winOf(px, py));
     }
-    visited.forEach(wid => {
-      const wxx = wid % wins;
-      const wyy = Math.floor(wid / wins);
+    visited.forEach(key => {
+      const [wx, wy] = key.split('_').map(Number);
+      const x = wx * winSize * patchPx - halfWin * patchPx;
+      const y = wy * winSize * patchPx - halfWin * patchPx;
       ctx.fillStyle = `rgba(${baseColor}, 0.06)`;
-      ctx.fillRect(wxx * winSize * patchPx, wyy * winSize * patchPx, winSize * patchPx, winSize * patchPx);
+      ctx.fillRect(x, y, winSize * patchPx, winSize * patchPx);
     });
   } else {
     for (let i = 0; i < seen; i++) {
@@ -3449,17 +3459,25 @@ function drawScan(canvas, img, size, patchPx, progress, mode) {
       }
     } else {
       const winSize = 4;
-      const wx = Math.floor(cx / winSize);
-      const wy = Math.floor(cy / winSize);
+      const halfWin = shifted ? winSize / 2 : 0;
+      const wx = Math.floor((cx + halfWin) / winSize);
+      const wy = Math.floor((cy + halfWin) / winSize);
+      const winX = wx * winSize * patchPx - halfWin * patchPx;
+      const winY = wy * winSize * patchPx - halfWin * patchPx;
+      const winSide = winSize * patchPx;
       ctx.fillStyle = `rgba(${baseColor}, 0.18)`;
-      ctx.fillRect(wx * winSize * patchPx, wy * winSize * patchPx, winSize * patchPx, winSize * patchPx);
+      ctx.fillRect(winX, winY, winSide, winSide);
       ctx.strokeStyle = `rgba(${baseColor}, 1)`;
       ctx.lineWidth = 2.5;
-      ctx.strokeRect(wx * winSize * patchPx, wy * winSize * patchPx, winSize * patchPx, winSize * patchPx);
+      ctx.strokeRect(winX, winY, winSide, winSide);
       ctx.strokeStyle = `rgba(${baseColor}, 0.5)`;
       ctx.lineWidth = 0.7;
-      for (let py = wy * winSize; py < (wy + 1) * winSize && py < gridN; py++) {
-        for (let px = wx * winSize; px < (wx + 1) * winSize && px < gridN; px++) {
+      const minPy = Math.max(0, wy * winSize - halfWin);
+      const maxPy = Math.min(gridN, (wy + 1) * winSize - halfWin);
+      const minPx = Math.max(0, wx * winSize - halfWin);
+      const maxPx = Math.min(gridN, (wx + 1) * winSize - halfWin);
+      for (let py = minPy; py < maxPy; py++) {
+        for (let px = minPx; px < maxPx; px++) {
           if (px === cx && py === cy) continue;
           const tx = px * patchPx + patchPx / 2;
           const ty = py * patchPx + patchPx / 2;
@@ -3854,6 +3872,49 @@ function ClassContribution({ image, attentionRows, gridN, preds, status, statusM
   );
 }
 
+/* SwinStages — four side-by-side thumbnails of the same image rendered at
+   each Swin stage's grid resolution (56→28→14→7). Visualises how patch
+   merging coarsens the spatial map while channels grow. Uses pixelated
+   upscale of a downsampled tiny canvas. */
+const SWIN_STAGES = [
+  { gridSide: 56, dim: 96  },
+  { gridSide: 28, dim: 192 },
+  { gridSide: 14, dim: 384 },
+  { gridSide: 7,  dim: 768 },
+];
+
+function SwinStageThumb({ image, gridSide }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!ref.current || !image) return;
+    const canvas = ref.current;
+    const size = 120;
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    const w = image.naturalWidth || image.width;
+    const h = image.naturalHeight || image.height;
+    const crop = Math.min(w, h);
+    const tiny = document.createElement('canvas');
+    tiny.width = gridSide;
+    tiny.height = gridSide;
+    const tctx = tiny.getContext('2d');
+    tctx.imageSmoothingEnabled = true;
+    tctx.drawImage(image, (w - crop) / 2, (h - crop) / 2, crop, crop, 0, 0, gridSide, gridSide);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(tiny, 0, 0, size, size);
+    // subtle teal grid overlay so students see where the merged patches sit
+    ctx.strokeStyle = 'rgba(20, 184, 166, 0.35)';
+    ctx.lineWidth = 1;
+    const step = size / gridSide;
+    for (let i = 1; i < gridSide; i++) {
+      ctx.beginPath(); ctx.moveTo(i * step, 0); ctx.lineTo(i * step, size); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, i * step); ctx.lineTo(size, i * step); ctx.stroke();
+    }
+  }, [image, gridSide]);
+  return <canvas ref={ref} className="w-full aspect-square rounded bg-slate-950 border border-slate-800 block"/>;
+}
+
 function LiveDemoTab() {
   const [galleryId, setGalleryId] = useState('cat');
   const [customSrc, setCustomSrc] = useState(null);
@@ -3863,6 +3924,9 @@ function LiveDemoTab() {
   const [progress, setProgress] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState('Slow');
+  // Swin-only layer toggle: 0 = W-MSA (regular), 1 = SW-MSA (shifted by ⌊M/2⌋).
+  // Demonstrates the key Swin innovation directly inside the Live Demo.
+  const [swinLayer, setSwinLayer] = useState(0);
 
   // Real classifier — runs ViT-Base/16 in the browser via transformers.js.
   // Loads the ONNX weights once on mount (~88 MB, cached by the browser),
@@ -3892,7 +3956,7 @@ function LiveDemoTab() {
       imgRef.current = img;
       attnRef.current = computeAttention(img);
       drawScan(vitRef.current, img, 360, patchSize, progress, 'vit');
-      drawScan(swinRef.current, img, 360, patchSize, progress, 'swin');
+      drawScan(swinRef.current, img, 360, patchSize, progress, 'swin', swinLayer === 1);
       drawMatrix(vitMatRef.current, attnRef.current?.vit, progress, 'vit');
       drawMatrix(swinMatRef.current, attnRef.current?.swin, progress, 'swin');
       setImgVersion(v => v + 1);
@@ -3905,10 +3969,10 @@ function LiveDemoTab() {
   useEffect(() => {
     if (!imgRef.current) return;
     drawScan(vitRef.current, imgRef.current, 360, patchSize, progress, 'vit');
-    drawScan(swinRef.current, imgRef.current, 360, patchSize, progress, 'swin');
+    drawScan(swinRef.current, imgRef.current, 360, patchSize, progress, 'swin', swinLayer === 1);
     drawMatrix(vitMatRef.current, attnRef.current?.vit, progress, 'vit');
     drawMatrix(swinMatRef.current, attnRef.current?.swin, progress, 'swin');
-  }, [patchSize, progress]);
+  }, [patchSize, progress, swinLayer]);
 
   useEffect(() => {
     if (!playing) return;
@@ -4075,6 +4139,23 @@ function LiveDemoTab() {
             </div>
             <span className="text-[10px] font-mono text-slate-500 uppercase">O(N)</span>
           </div>
+          {/* Layer toggle: W-MSA ↔ SW-MSA. Swin's signature trick. */}
+          <div className="flex gap-1 mb-2 bg-slate-800/40 rounded p-0.5 border border-slate-700/60">
+            <button
+              onClick={() => setSwinLayer(0)}
+              className={`flex-1 px-2 py-1 rounded text-[10px] font-mono transition-all
+                ${swinLayer === 0 ? 'bg-teal-500/25 text-teal-100' : 'text-slate-400 hover:text-slate-200'}`}
+            >
+              Layer 1 · W-MSA
+            </button>
+            <button
+              onClick={() => setSwinLayer(1)}
+              className={`flex-1 px-2 py-1 rounded text-[10px] font-mono transition-all
+                ${swinLayer === 1 ? 'bg-teal-500/25 text-teal-100' : 'text-slate-400 hover:text-slate-200'}`}
+            >
+              Layer 2 · SW-MSA
+            </button>
+          </div>
           <div className="grid grid-cols-2 gap-2">
             <div>
               <div className="text-[10px] font-mono text-slate-500 uppercase mb-0.5">scan</div>
@@ -4086,9 +4167,15 @@ function LiveDemoTab() {
             </div>
           </div>
           <p className="text-[10px] text-slate-400 mt-2 leading-snug">
-            Attention stays inside windows · block-diagonal matrix.
+            {swinLayer === 0
+              ? <>Layer 1 · regular windows. Block-diagonal matrix; patches near a wall can't talk.</>
+              : <>Layer 2 · windows shifted by ⌊M/2⌋. Look at the scan — old neighbors are now in different windows. Across two layers, info crosses every wall.</>}
           </p>
         </Card>
+
+        {/* Swin · 4 stages of patch merging — fits in the 3rd column slot of
+            another optional row; here we render below the per-class card.
+            Wrapping in a Fragment so the parent grid stays 3 cols. */}
 
         <Card className="p-3">
           <div className="flex items-center justify-between mb-2">
@@ -4110,6 +4197,35 @@ function LiveDemoTab() {
           />
         </Card>
       </div>
+
+      {/* Swin · 4 stages of patch merging. Same image rendered at 56→28→14→7
+          to show the hierarchical resolution drop directly in the demo. */}
+      <Card className="p-3">
+        <div className="flex items-baseline justify-between mb-2 flex-wrap gap-2">
+          <div className="flex items-center gap-1.5">
+            <Tag color="teal">Swin</Tag>
+            <span className="text-[12px] text-slate-200">4 stages of patch merging</span>
+          </div>
+          <span className="text-[10px] font-mono text-slate-500">
+            after each merge: tokens × ¼ · channels × 2 · receptive field × 2
+          </span>
+        </div>
+        <div className="grid grid-cols-4 gap-2">
+          {SWIN_STAGES.map((s, i) => (
+            <div key={i} className="text-center">
+              <SwinStageThumb image={imgRef.current} gridSide={s.gridSide}/>
+              <div className="text-[10px] font-mono text-teal-300 mt-1">Stage {i + 1}</div>
+              <div className="text-[9px] font-mono text-slate-400">{s.gridSide}×{s.gridSide} tokens</div>
+              <div className="text-[9px] font-mono text-slate-500">{s.dim}-dim</div>
+            </div>
+          ))}
+        </div>
+        <p className="text-[10px] text-slate-400 mt-2 leading-snug">
+          ViT keeps the same resolution all the way through. Swin halves it 3 times across 4 stages —
+          earlier stages capture fine detail, deeper stages see broader context. That pyramid is what
+          makes Swin a usable backbone for detection / segmentation.
+        </p>
+      </Card>
 
       {/* Compact controls row */}
       <Card className="p-3">
