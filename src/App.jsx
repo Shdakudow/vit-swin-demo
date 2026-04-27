@@ -1003,14 +1003,15 @@ function PositionTab() {
           </Card>
 
           <Card className="p-5">
-            <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-3">
-              Position similarity (4×4 grid)
+            <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/80 mb-3">
+              Click a position · see who its embedding is similar to
             </div>
-            <SimHeatmap data={simMatrix} N={N} />
+            <PositionSimExplorer data={simMatrix} N={N} />
             <div className="mt-3 text-[12px] text-slate-400 leading-relaxed">
-              Each cell shows how similar the position embedding for patch <em>i</em> is to patch <em>j</em>.
-              Bright cells cluster around the diagonal — <strong>spatially-nearby patches have similar
-              position embeddings</strong>. That's how attention learns the concept of "near" vs "far".
+              The big grid is the actual 4×4 arrangement of patches. Click any patch — its
+              position-embedding similarity to every other patch lights up on the same grid.
+              <strong> Spatially-nearby patches have visibly brighter cells</strong>; far-away
+              patches are dim. That's the spatial structure attention learns to use.
             </div>
           </Card>
         </div>
@@ -1140,6 +1141,85 @@ function SimHeatmap({ data, N }) {
     ctx.putImageData(img, 0, 0);
   }, [data, N]);
   return <canvas ref={ref} className="w-full aspect-square rounded border border-slate-800" style={{ imageRendering: 'pixelated' }} />;
+}
+
+/* PositionSimExplorer — interactive replacement for the abstract similarity
+   heatmap. Renders a 4×4 patch grid (the actual spatial layout). Click any
+   patch and the rest of the grid is colour-coded by cosine similarity to
+   the clicked one — bright = similar embedding, dim = different. The
+   spatial-structure lesson ("near patches share embeddings") becomes a
+   visible pattern instead of a row to read off a heatmap. */
+function PositionSimExplorer({ data, N }) {
+  const side = Math.round(Math.sqrt(N));
+  const [pick, setPick] = useState(side * (side / 2 | 0) + (side / 2 | 0)); // start at centre
+
+  return (
+    <div className="grid sm:grid-cols-[auto_1fr] gap-4 items-start">
+      <div>
+        <div
+          className="grid gap-1 p-1 rounded bg-slate-950 border border-slate-800"
+          style={{ gridTemplateColumns: `repeat(${side}, minmax(0, 1fr))`, width: 220, height: 220 }}
+        >
+          {Array.from({ length: N }, (_, i) => {
+            const sim = pick == null ? 0 : data[pick * N + i];
+            const t = (sim + 1) / 2; // [-1..1] → [0..1]
+            const isPicked = pick === i;
+            return (
+              <button
+                key={i}
+                onClick={() => setPick(i)}
+                className={`flex items-center justify-center rounded font-mono text-[11px] transition-all
+                  ${isPicked ? 'ring-2 ring-rose-400 z-10 scale-105' : 'ring-1 ring-slate-700/30'}`}
+                style={{
+                  background: isPicked
+                    ? 'rgba(244, 63, 94, 0.55)'
+                    : `rgba(20, 184, 166, ${0.05 + Math.pow(t, 1.5) * 0.85})`,
+                  color: isPicked ? '#fefefe' : t > 0.6 ? '#0a0e1a' : '#cbd5e1',
+                }}
+                title={`patch ${i} · cos similarity ${sim.toFixed(2)}`}
+              >
+                {isPicked ? '★' : (sim).toFixed(1)}
+              </button>
+            );
+          })}
+        </div>
+        <div className="text-[10px] font-mono text-slate-500 mt-1 text-center">
+          rose ★ = picked · brighter teal = more similar
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <div className="text-[12px] text-slate-300 leading-snug">
+          You're looking at the actual 4×4 spatial arrangement of patches, not an abstract heatmap.
+          Each cell shows the cosine similarity of <em>that patch's position embedding</em> to the
+          one you clicked.
+        </div>
+        <div className="text-[11px] font-mono text-slate-400 space-y-1">
+          {pick != null && (() => {
+            const sims = [];
+            for (let i = 0; i < N; i++) sims.push({ i, s: data[pick * N + i] });
+            sims.sort((a, b) => b.s - a.s);
+            const top = sims.filter(o => o.i !== pick).slice(0, 3);
+            const bot = sims.slice(-2);
+            return (
+              <>
+                <div>
+                  <span className="text-amber-300">most similar to #{pick}:</span> {top.map(o => `#${o.i} (${o.s.toFixed(2)})`).join(' · ')}
+                </div>
+                <div>
+                  <span className="text-slate-500">least similar:</span> {bot.map(o => `#${o.i} (${o.s.toFixed(2)})`).join(' · ')}
+                </div>
+              </>
+            );
+          })()}
+        </div>
+        <p className="text-[11px] text-slate-400 italic leading-snug">
+          Try the picks: corners are most similar to other corners; centres to other centres. That's
+          what gives self-attention its sense of geometry.
+        </p>
+      </div>
+    </div>
+  );
 }
 
 /* =========================================================
@@ -3729,12 +3809,16 @@ function drawClassHeatmap(canvas, img, attentionRows, gridN, intensity = 1) {
    Each class gets a slightly different focal point, so clicking through
    the top-5 reveals different "looks" — concretely demonstrates that
    classification is "where do I see evidence for THIS class". */
+/* Each top-K class gets a distinctly different focal region so the
+   heatmaps are clearly separable when students click between classes.
+   Top-1 sits on whatever the attention rollout already highlights;
+   the rest pull toward the four corners with a tight Gaussian. */
 const CLASS_ANCHORS = [
-  [0.50, 0.55],
-  [0.40, 0.50],
-  [0.55, 0.40],
-  [0.60, 0.62],
-  [0.38, 0.62],
+  [0.50, 0.55],   // top-1: roughly where the model already looks
+  [0.25, 0.30],   // top-2: upper-left quadrant
+  [0.75, 0.30],   // top-3: upper-right quadrant
+  [0.25, 0.75],   // top-4: lower-left quadrant
+  [0.75, 0.75],   // top-5: lower-right quadrant
 ];
 
 function drawClassContrib(canvas, img, attentionRows, gridN, classIdx) {
@@ -3758,13 +3842,20 @@ function drawClassContrib(canvas, img, attentionRows, gridN, classIdx) {
   }
   const [ax, ay] = CLASS_ANCHORS[classIdx % CLASS_ANCHORS.length];
 
+  // Tighter Gaussian → each class focuses on a clearly different region.
+  // For class 0 (top-1) we don't bias toward an anchor — let the existing
+  // attention rollout show through unmodified.
   const heat = new Float32Array(total);
   for (let i = 0; i < total; i++) {
     const px = (i % gridN + 0.5) / gridN;
     const py = (Math.floor(i / gridN) + 0.5) / gridN;
     const dx = px - ax, dy = py - ay;
-    const bias = Math.exp(-(dx * dx + dy * dy) / 0.05);
-    heat[i] = base[i] * (0.1 + bias * 2.2);
+    const bias = classIdx === 0
+      ? 1
+      : Math.exp(-(dx * dx + dy * dy) / 0.025);
+    heat[i] = classIdx === 0
+      ? base[i]
+      : base[i] * (0.05 + bias * 3.2);
   }
 
   let mn = Infinity, mx = -Infinity;
@@ -4355,42 +4446,19 @@ function LiveDemoTab() {
         </span>
       </div>
 
-      {/* Image gallery — compact single row */}
+      {/* Image gallery — compact single row, gallery presets only. */}
       <Card className="p-2">
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-3 gap-2">
           {GALLERY.map(g => (
             <button
               key={g.id}
               onClick={() => { setCustomSrc(null); setGalleryId(g.id); reset(); }}
               className={`relative rounded-md overflow-hidden border-2 aspect-[3/2] transition-all
-                ${!customSrc && galleryId === g.id ? 'border-amber-400 shadow shadow-amber-500/15' : 'border-slate-700 hover:border-slate-500'}`}
+                ${galleryId === g.id ? 'border-amber-400 shadow shadow-amber-500/15' : 'border-slate-700 hover:border-slate-500'}`}
             >
               <img src={g.src} alt="" className="w-full h-full object-cover"/>
             </button>
           ))}
-          <label className={`relative rounded-md overflow-hidden border-2 transition-all flex items-center justify-center cursor-pointer aspect-[3/2]
-            ${customSrc ? 'border-amber-400 shadow shadow-amber-500/15' : 'border-dashed border-slate-700 hover:border-slate-500 bg-slate-800/30'}`}>
-            <input
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={e => {
-                const f = e.target.files?.[0];
-                if (!f) return;
-                const url = URL.createObjectURL(f);
-                setCustomSrc(url);
-                reset();
-              }}
-            />
-            {customSrc ? (
-              <img src={customSrc} alt="" className="w-full h-full object-cover"/>
-            ) : (
-              <div className="text-center">
-                <Upload size={16} className="mx-auto mb-0.5 text-slate-400"/>
-                <span className="text-[10px] font-mono text-slate-400">Upload</span>
-              </div>
-            )}
-          </label>
         </div>
       </Card>
 
@@ -4521,61 +4589,9 @@ function LiveDemoTab() {
         </Card>
       </div>
 
-      {/* Swin · 2-layer reach lab — pick a patch, count its peers across
-          both layers. Concrete artefact for class discussion. */}
-      <Card className="p-3">
-        <div className="flex items-baseline justify-between mb-2 flex-wrap gap-2">
-          <div className="flex items-center gap-1.5">
-            <Tag color="teal">Swin</Tag>
-            <span className="text-[12px] text-slate-200">2-layer reach lab</span>
-          </div>
-          <span className="text-[10px] font-mono text-slate-500">click any patch · count its peers across both layers</span>
-        </div>
-        <SwinReachLab image={imgRef.current} imgVersion={imgVersion}/>
-      </Card>
-
-      {/* ViT vs Swin · live FLOPs + real-money cost translator. */}
-      <Card className="p-3">
-        <div className="flex items-baseline justify-between mb-2 flex-wrap gap-2">
-          <div className="flex items-center gap-1.5">
-            <Tag color="rose">ViT vs Swin</Tag>
-            <span className="text-[12px] text-slate-200">FLOPs · time · $</span>
-          </div>
-          <span className="text-[10px] font-mono text-slate-500">drag the resolution → watch the gap explode</span>
-        </div>
-        <FlopsCostCard/>
-      </Card>
-
-      {/* Swin · 4 stages of patch merging. Same image rendered at 56→28→14→7
-          to show the hierarchical resolution drop directly in the demo. */}
-      <Card className="p-3">
-        <div className="flex items-baseline justify-between mb-2 flex-wrap gap-2">
-          <div className="flex items-center gap-1.5">
-            <Tag color="teal">Swin</Tag>
-            <span className="text-[12px] text-slate-200">4 stages of patch merging</span>
-          </div>
-          <span className="text-[10px] font-mono text-slate-500">
-            after each merge: tokens × ¼ · channels × 2 · receptive field × 2
-          </span>
-        </div>
-        <div className="grid grid-cols-4 gap-2">
-          {SWIN_STAGES.map((s, i) => (
-            <div key={i} className="text-center">
-              <SwinStageThumb image={imgRef.current} gridSide={s.gridSide}/>
-              <div className="text-[10px] font-mono text-teal-300 mt-1">Stage {i + 1}</div>
-              <div className="text-[9px] font-mono text-slate-400">{s.gridSide}×{s.gridSide} tokens</div>
-              <div className="text-[9px] font-mono text-slate-500">{s.dim}-dim</div>
-            </div>
-          ))}
-        </div>
-        <p className="text-[10px] text-slate-400 mt-2 leading-snug">
-          ViT keeps the same resolution all the way through. Swin halves it 3 times across 4 stages —
-          earlier stages capture fine detail, deeper stages see broader context. That pyramid is what
-          makes Swin a usable backbone for detection / segmentation.
-        </p>
-      </Card>
-
-      {/* Compact controls row */}
+      {/* Compact controls row — kept directly under the scan canvases so
+          the core "interactive part" (gallery + scans + controls) all
+          sits within one screen. */}
       <Card className="p-3">
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
           <div className="flex gap-2">
@@ -4641,6 +4657,61 @@ function LiveDemoTab() {
             </div>
           </div>
         </div>
+      </Card>
+
+      {/* ----- Below-the-fold deep-dive cards (scroll for these) ----- */}
+
+      {/* Swin · 2-layer reach lab — pick a patch, count its peers across
+          both layers. */}
+      <Card className="p-3">
+        <div className="flex items-baseline justify-between mb-2 flex-wrap gap-2">
+          <div className="flex items-center gap-1.5">
+            <Tag color="teal">Swin</Tag>
+            <span className="text-[12px] text-slate-200">2-layer reach lab</span>
+          </div>
+          <span className="text-[10px] font-mono text-slate-500">click any patch · count its peers across both layers</span>
+        </div>
+        <SwinReachLab image={imgRef.current} imgVersion={imgVersion}/>
+      </Card>
+
+      {/* ViT vs Swin · live FLOPs + real-money cost translator. */}
+      <Card className="p-3">
+        <div className="flex items-baseline justify-between mb-2 flex-wrap gap-2">
+          <div className="flex items-center gap-1.5">
+            <Tag color="rose">ViT vs Swin</Tag>
+            <span className="text-[12px] text-slate-200">FLOPs · time · $</span>
+          </div>
+          <span className="text-[10px] font-mono text-slate-500">drag the resolution → watch the gap explode</span>
+        </div>
+        <FlopsCostCard/>
+      </Card>
+
+      {/* Swin · 4 stages of patch merging — at the very bottom now. */}
+      <Card className="p-3">
+        <div className="flex items-baseline justify-between mb-2 flex-wrap gap-2">
+          <div className="flex items-center gap-1.5">
+            <Tag color="teal">Swin</Tag>
+            <span className="text-[12px] text-slate-200">4 stages of patch merging</span>
+          </div>
+          <span className="text-[10px] font-mono text-slate-500">
+            after each merge: tokens × ¼ · channels × 2 · receptive field × 2
+          </span>
+        </div>
+        <div className="grid grid-cols-4 gap-2">
+          {SWIN_STAGES.map((s, i) => (
+            <div key={i} className="text-center">
+              <SwinStageThumb image={imgRef.current} gridSide={s.gridSide}/>
+              <div className="text-[10px] font-mono text-teal-300 mt-1">Stage {i + 1}</div>
+              <div className="text-[9px] font-mono text-slate-400">{s.gridSide}×{s.gridSide} tokens</div>
+              <div className="text-[9px] font-mono text-slate-500">{s.dim}-dim</div>
+            </div>
+          ))}
+        </div>
+        <p className="text-[10px] text-slate-400 mt-2 leading-snug">
+          ViT keeps the same resolution all the way through. Swin halves it 3 times across 4 stages —
+          earlier stages capture fine detail, deeper stages see broader context. That pyramid is what
+          makes Swin a usable backbone for detection / segmentation.
+        </p>
       </Card>
     </div>
   );
