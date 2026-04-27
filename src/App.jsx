@@ -1153,38 +1153,73 @@ function PositionSimExplorer({ data, N }) {
   const side = Math.round(Math.sqrt(N));
   const [pick, setPick] = useState(side * (side / 2 | 0) + (side / 2 | 0)); // start at centre
 
+  // Min-max normalise the picked row so the colour gradient stretches across
+  // the actual range, not the theoretical [-1, 1]. Without this, real similarity
+  // values (typically 0.6–1.0 for a 16-patch grid) all look uniformly bright.
+  let minSim = Infinity, maxSim = -Infinity;
+  if (pick != null) {
+    for (let i = 0; i < N; i++) {
+      if (i === pick) continue;
+      const s = data[pick * N + i];
+      if (s < minSim) minSim = s;
+      if (s > maxSim) maxSim = s;
+    }
+  }
+  const span = Math.max(1e-9, maxSim - minSim);
+
+  // High-contrast magma-style ramp so cell-to-cell density jumps are obvious.
+  // t in [0, 1] from min similarity in the row → max similarity.
+  function ramp(t) {
+    const stops = [
+      [0.00,   8,  10,  35],
+      [0.30,  60,  20,  90],
+      [0.55, 200,  60,  90],
+      [0.80, 250, 150,  50],
+      [1.00, 255, 240, 110],
+    ];
+    for (let i = 1; i < stops.length; i++) {
+      if (t <= stops[i][0]) {
+        const a = stops[i - 1], b = stops[i];
+        const u = (t - a[0]) / (b[0] - a[0]);
+        return [a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u, a[3] + (b[3] - a[3]) * u];
+      }
+    }
+    return stops[stops.length - 1].slice(1);
+  }
+
   return (
     <div className="grid sm:grid-cols-[auto_1fr] gap-4 items-start">
       <div>
         <div
           className="grid gap-1 p-1 rounded bg-slate-950 border border-slate-800"
-          style={{ gridTemplateColumns: `repeat(${side}, minmax(0, 1fr))`, width: 220, height: 220 }}
+          style={{ gridTemplateColumns: `repeat(${side}, minmax(0, 1fr))`, width: 240, height: 240 }}
         >
           {Array.from({ length: N }, (_, i) => {
-            const sim = pick == null ? 0 : data[pick * N + i];
-            const t = (sim + 1) / 2; // [-1..1] → [0..1]
             const isPicked = pick === i;
+            const sim = pick == null ? 0 : data[pick * N + i];
+            const t = isPicked ? 1 : Math.pow((sim - minSim) / span, 0.85);
+            const [r, g, b] = ramp(t);
             return (
               <button
                 key={i}
                 onClick={() => setPick(i)}
-                className={`flex items-center justify-center rounded font-mono text-[11px] transition-all
+                className={`flex items-center justify-center rounded font-mono text-[10px] leading-tight transition-all
                   ${isPicked ? 'ring-2 ring-rose-400 z-10 scale-105' : 'ring-1 ring-slate-700/30'}`}
                 style={{
                   background: isPicked
-                    ? 'rgba(244, 63, 94, 0.55)'
-                    : `rgba(20, 184, 166, ${0.05 + Math.pow(t, 1.5) * 0.85})`,
-                  color: isPicked ? '#fefefe' : t > 0.6 ? '#0a0e1a' : '#cbd5e1',
+                    ? 'rgba(244, 63, 94, 0.65)'
+                    : `rgb(${r | 0}, ${g | 0}, ${b | 0})`,
+                  color: isPicked ? '#fff' : t > 0.55 ? '#0a0e1a' : '#e2e8f0',
                 }}
-                title={`patch ${i} · cos similarity ${sim.toFixed(2)}`}
+                title={`patch ${i} · cos similarity ${sim.toFixed(4)}`}
               >
-                {isPicked ? '★' : (sim).toFixed(1)}
+                {isPicked ? '★' : sim.toFixed(2)}
               </button>
             );
           })}
         </div>
         <div className="text-[10px] font-mono text-slate-500 mt-1 text-center">
-          rose ★ = picked · brighter teal = more similar
+          rose ★ = picked · bright yellow = most similar in this row · dark = least
         </div>
       </div>
 
@@ -1192,7 +1227,7 @@ function PositionSimExplorer({ data, N }) {
         <div className="text-[12px] text-slate-300 leading-snug">
           You're looking at the actual 4×4 spatial arrangement of patches, not an abstract heatmap.
           Each cell shows the cosine similarity of <em>that patch's position embedding</em> to the
-          one you clicked.
+          one you clicked. Colour scales relative to the row's range so differences pop.
         </div>
         <div className="text-[11px] font-mono text-slate-400 space-y-1">
           {pick != null && (() => {
@@ -1204,10 +1239,13 @@ function PositionSimExplorer({ data, N }) {
             return (
               <>
                 <div>
-                  <span className="text-amber-300">most similar to #{pick}:</span> {top.map(o => `#${o.i} (${o.s.toFixed(2)})`).join(' · ')}
+                  <span className="text-amber-300">most similar to #{pick}:</span> {top.map(o => `#${o.i} (${o.s.toFixed(4)})`).join(' · ')}
                 </div>
                 <div>
-                  <span className="text-slate-500">least similar:</span> {bot.map(o => `#${o.i} (${o.s.toFixed(2)})`).join(' · ')}
+                  <span className="text-slate-500">least similar:</span> {bot.map(o => `#${o.i} (${o.s.toFixed(4)})`).join(' · ')}
+                </div>
+                <div className="text-slate-500">
+                  range in this row: {minSim.toFixed(4)} → {maxSim.toFixed(4)}
                 </div>
               </>
             );
@@ -4014,17 +4052,17 @@ function FlopsCostCard() {
   const fmtFlops = (v) => v >= 1e12 ? `${(v / 1e12).toFixed(2)} T` : v >= 1e9 ? `${(v / 1e9).toFixed(2)} G` : `${(v / 1e6).toFixed(0)} M`;
   const fmtCost = (v) => v >= 1 ? `$${v.toFixed(2)}` : v >= 0.01 ? `$${v.toFixed(3)}` : `$${v.toExponential(1)}`;
   return (
-    <div className="grid md:grid-cols-[200px_1fr] gap-5 items-start">
-      <div>
+    <div className="space-y-3">
+      {/* Full-width slider so all options have room. */}
+      <div className="grid sm:grid-cols-[1fr_auto] gap-3 items-end">
         <Slider
           label="Image side (px)"
           value={side}
           options={[224, 384, 512, 768, 1024, 1536]}
           onChange={setSide}
         />
-        <div className="mt-3 text-[12px] font-mono leading-relaxed">
-          <div className="text-slate-400">P = 16 · L = 12 · M = 7</div>
-          <div className="text-amber-300 mt-1">N = {N.toLocaleString()} patches</div>
+        <div className="text-[11px] font-mono text-slate-400 whitespace-nowrap">
+          P = 16 · L = 12 · M = 7 · <span className="text-amber-300">N = {N.toLocaleString()}</span>
         </div>
       </div>
       <div className="space-y-2">
@@ -4079,11 +4117,15 @@ function FlopsCostCard() {
 function SwinReachLab({ image, imgVersion }) {
   const SIZE = 240;
   const PATCH = 30;
-  const GRID = SIZE / PATCH;
-  const M = 4;
-  const HALF = M / 2;
+  const GRID = SIZE / PATCH; // 8
   const canvasRef = useRef(null);
   const [pick, setPick] = useState(null);
+  // Window size — students can drag M to see how locality vs reach trades off.
+  const [M, setM] = useState(4);
+  // Layer view filter — show L1 only, L2 only, or both. Discussion-driver:
+  // "what does each layer alone reach? what does adding the second do?"
+  const [view, setView] = useState('both'); // 'L1' | 'L2' | 'both'
+  const HALF = M / 2;
 
   const reach = useMemo(() => {
     if (pick == null) return null;
@@ -4105,7 +4147,7 @@ function SwinReachLab({ image, imgVersion }) {
     let overlap = 0;
     l1.forEach(i => { if (l2.has(i)) overlap++; });
     return { l1, l2, combined, overlap, total: GRID * GRID - 1 };
-  }, [pick]);
+  }, [pick, M, HALF]);
 
   useEffect(() => { setPick(null); }, [imgVersion]);
 
@@ -4136,14 +4178,17 @@ function SwinReachLab({ image, imgVersion }) {
         if (i === pick) continue;
         const inL1 = reach.l1.has(i);
         const inL2 = reach.l2.has(i);
-        if (!inL1 && !inL2) continue;
+        // Apply view filter: if user picked L1 only, hide L2-only patches, etc.
+        const showL1 = inL1 && (view === 'L1' || view === 'both');
+        const showL2 = inL2 && (view === 'L2' || view === 'both');
+        if (!showL1 && !showL2) continue;
         const px = (i % GRID) * PATCH;
         const py = ((i / GRID) | 0) * PATCH;
-        const fill = inL1 && inL2
-          ? 'rgba(245, 158, 11, 0.50)'
-          : inL1
-            ? 'rgba(245, 158, 11, 0.30)'
-            : 'rgba(20, 184, 166, 0.50)';
+        const fill = (showL1 && showL2)
+          ? 'rgba(245, 158, 11, 0.55)'
+          : showL1
+            ? 'rgba(245, 158, 11, 0.32)'
+            : 'rgba(20, 184, 166, 0.55)';
         ctx.fillStyle = fill;
         ctx.fillRect(px, py, PATCH, PATCH);
       }
@@ -4155,7 +4200,7 @@ function SwinReachLab({ image, imgVersion }) {
       ctx.lineWidth = 2;
       ctx.strokeRect(qx + 1, qy + 1, PATCH - 2, PATCH - 2);
     }
-  }, [image, reach, pick]);
+  }, [image, reach, pick, view]);
 
   const handleClick = (e) => {
     const c = canvasRef.current;
@@ -4183,24 +4228,60 @@ function SwinReachLab({ image, imgVersion }) {
         </div>
       </div>
       <div className="space-y-3">
+        {/* Interactive controls — work even before a patch is picked. */}
+        <div className="flex items-end justify-between gap-3 flex-wrap">
+          <div className="flex gap-1 bg-slate-800/40 rounded p-0.5 border border-slate-700/60">
+            {['L1', 'L2', 'both'].map(v => (
+              <button
+                key={v}
+                onClick={() => setView(v)}
+                className={`px-2.5 py-1 rounded text-[10px] font-mono transition-all
+                  ${view === v ? 'bg-teal-500/25 text-teal-100' : 'text-slate-400 hover:text-slate-200'}`}
+              >
+                {v === 'both' ? 'Both layers' : `${v} only`}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">Window M</label>
+            <div className="flex gap-1">
+              {[2, 4, 8].map(opt => (
+                <button
+                  key={opt}
+                  onClick={() => setM(opt)}
+                  className={`w-8 px-1 py-0.5 rounded text-[11px] font-mono border transition-all
+                    ${M === opt
+                      ? 'bg-amber-500/20 border-amber-500/50 text-amber-200'
+                      : 'bg-slate-800/40 border-slate-700 text-slate-400 hover:text-slate-200'}`}
+                >
+                  {opt}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
         {!reach ? (
           <div className="text-[12px] text-slate-500 italic">
-            Pick a query patch to count how many others it reaches in two layers — try a corner, then the centre.
+            Pick a query patch to count how many others it reaches in two layers — try a corner, then the centre. Change M and the view to compare.
           </div>
         ) : (
           <>
             <div className="grid grid-cols-3 gap-2 text-center">
-              <div className="rounded p-2 bg-amber-500/[0.06] border border-amber-500/30">
+              <div className={`rounded p-2 border transition-all
+                ${view === 'L1' ? 'bg-amber-500/15 border-amber-500/60' : 'bg-amber-500/[0.06] border-amber-500/30'}`}>
                 <div className="text-amber-300 font-mono text-[10px]">Layer 1 · W-MSA</div>
                 <div className="text-slate-100 font-serif text-3xl leading-tight">{reach.l1.size}</div>
                 <div className="text-slate-500 text-[10px]">windowmates</div>
               </div>
-              <div className="rounded p-2 bg-teal-500/[0.06] border border-teal-500/30">
+              <div className={`rounded p-2 border transition-all
+                ${view === 'L2' ? 'bg-teal-500/15 border-teal-500/60' : 'bg-teal-500/[0.06] border-teal-500/30'}`}>
                 <div className="text-teal-300 font-mono text-[10px]">Layer 2 · SW-MSA</div>
                 <div className="text-slate-100 font-serif text-3xl leading-tight">{reach.l2.size}</div>
                 <div className="text-slate-500 text-[10px]">windowmates</div>
               </div>
-              <div className="rounded p-2 bg-rose-500/[0.06] border border-rose-500/40">
+              <div className={`rounded p-2 border transition-all
+                ${view === 'both' ? 'bg-rose-500/15 border-rose-500/60' : 'bg-rose-500/[0.06] border-rose-500/40'}`}>
                 <div className="text-rose-300 font-mono text-[10px]">After 2 layers</div>
                 <div className="text-slate-100 font-serif text-3xl leading-tight">{reach.combined.size}</div>
                 <div className="text-slate-500 text-[10px]">unique / {reach.total}</div>
@@ -4208,16 +4289,14 @@ function SwinReachLab({ image, imgVersion }) {
             </div>
             <div className="flex flex-wrap gap-3 text-[11px] font-mono">
               <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm bg-rose-500/60"/>query</span>
-              <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm bg-amber-500/50"/>both layers</span>
-              <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm bg-amber-500/30"/>L1 only</span>
-              <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm bg-teal-500/50"/>L2 only · new via shift</span>
+              {(view === 'both') && <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm bg-amber-500/55"/>both layers</span>}
+              {(view === 'L1' || view === 'both') && <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm bg-amber-500/32"/>L1</span>}
+              {(view === 'L2' || view === 'both') && <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm bg-teal-500/55"/>L2 (new via shift)</span>}
             </div>
             <p className="text-[12px] text-slate-300 leading-snug">
-              Without the shift this query would only reach <span className="text-amber-300 font-medium">{reach.l1.size}</span> patches.
-              The shift adds <span className="text-teal-300 font-medium">{reach.l2.size - reach.overlap}</span> brand-new neighbours;
-              over two layers the query touches <span className="text-rose-300 font-medium">{reach.combined.size}</span> of {reach.total} other patches
-              ({Math.round(reach.combined.size / reach.total * 100)}% of the image).
-              Try a corner patch — does it reach as many?
+              {view === 'L1' && <>L1 alone reaches <span className="text-amber-300 font-medium">{reach.l1.size}</span> of {reach.total} other patches at M={M}. Without shifting that's all this query ever sees.</>}
+              {view === 'L2' && <>L2 alone (the shifted layer) reaches <span className="text-teal-300 font-medium">{reach.l2.size}</span> patches — different ones than L1 because the windows moved.</>}
+              {view === 'both' && <>Without the shift this query reaches <span className="text-amber-300 font-medium">{reach.l1.size}</span>; the shift adds <span className="text-teal-300 font-medium">{reach.l2.size - reach.overlap}</span> brand-new neighbours; over two layers the query touches <span className="text-rose-300 font-medium">{reach.combined.size}</span> of {reach.total} ({Math.round(reach.combined.size / reach.total * 100)}%).</>}
             </p>
           </>
         )}
