@@ -1472,7 +1472,7 @@ function AttentionTab() {
           via softmax, and use those weights to take a weighted average of the values.
         </p>
         <div className="text-amber-200 bg-slate-950/60 border border-amber-500/20 rounded-lg p-4 max-w-2xl">
-          <TeXBlock>{String.raw`\text{Attention}(Q, K, V) = \text{softmax}\!\left(\frac{Q K^\top}{\sqrt{d_k}}\right) V`}</TeXBlock>
+          <TeXBlock>{String.raw`\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{Q K^{\top}}{\sqrt{d_k}}\right) V`}</TeXBlock>
         </div>
       </Section>
 
@@ -1840,8 +1840,8 @@ function MultiHeadTab() {
           specialize: one might track color similarity, another spatial proximity, another shape.
         </p>
         <div className="text-amber-200 bg-slate-950/60 border border-amber-500/20 rounded-lg p-4 max-w-3xl space-y-1">
-          <TeXBlock>{String.raw`\text{MultiHead}(Q, K, V) = \text{Concat}(\text{head}_1, \ldots, \text{head}_h)\, W_O`}</TeXBlock>
-          <TeXBlock>{String.raw`\text{head}_i = \text{Attention}(Q W_Q^i,\, K W_K^i,\, V W_V^i)`}</TeXBlock>
+          <TeXBlock>{String.raw`\text{MultiHead}(Q, K, V) = \text{Concat}\!\big(\text{head}_{1}, \ldots, \text{head}_{h}\big)\, W_{O}`}</TeXBlock>
+          <TeXBlock>{String.raw`\text{head}_{i} = \text{Attention}\!\big(Q W_{Q}^{i},\, K W_{K}^{i},\, V W_{V}^{i}\big)`}</TeXBlock>
         </div>
       </Section>
 
@@ -2469,8 +2469,8 @@ function PipelineDetail({ step }) {
         <>
           <p>Apply L identical blocks. Each block is:</p>
           <div className="text-amber-200 bg-slate-950/60 border border-amber-500/20 rounded-lg p-3 mt-2 space-y-1">
-            <TeXBlock>{String.raw`z'_\ell = \text{MSA}(\text{LN}(z_{\ell-1})) + z_{\ell-1}`}</TeXBlock>
-            <TeXBlock>{String.raw`z_\ell  = \text{MLP}(\text{LN}(z'_\ell)) + z'_\ell`}</TeXBlock>
+            <TeXBlock>{String.raw`z'_{\ell} = \text{MSA}\!\big(\text{LN}(z_{\ell-1})\big) + z_{\ell-1}`}</TeXBlock>
+            <TeXBlock>{String.raw`z_{\ell}  = \text{MLP}\!\big(\text{LN}(z'_{\ell})\big) + z'_{\ell}`}</TeXBlock>
           </div>
           <p className="mt-2 text-slate-400 text-sm">ViT-Base: L=12 blocks, h=12 heads, MLP hidden dim 3072.</p>
         </>
