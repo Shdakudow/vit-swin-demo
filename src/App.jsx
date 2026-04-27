@@ -3872,6 +3872,162 @@ function ClassContribution({ image, attentionRows, gridN, preds, status, statusM
   );
 }
 
+/* SwinReachLab — click any patch on the cat and the panel shows how
+   many peers that query directly exchanges with in Layer 1 (W-MSA),
+   Layer 2 (SW-MSA), and the union across both. The reach map colours
+   each reachable patch by which layer reached it (amber = both, dim
+   amber = L1 only, teal = L2 only). Concrete artefact for class
+   discussion: pick a corner patch vs a centre patch, count, debate. */
+function SwinReachLab({ image, imgVersion }) {
+  const SIZE = 240;
+  const PATCH = 30;
+  const GRID = SIZE / PATCH;
+  const M = 4;
+  const HALF = M / 2;
+  const canvasRef = useRef(null);
+  const [pick, setPick] = useState(null);
+
+  const reach = useMemo(() => {
+    if (pick == null) return null;
+    const px = pick % GRID;
+    const py = (pick / GRID) | 0;
+    const wReg = (rx, ry) => `${(rx / M) | 0}_${(ry / M) | 0}`;
+    const wShift = (rx, ry) => `${((rx + HALF) / M) | 0}_${((ry + HALF) / M) | 0}`;
+    const w1 = wReg(px, py);
+    const w2 = wShift(px, py);
+    const l1 = new Set();
+    const l2 = new Set();
+    for (let i = 0; i < GRID * GRID; i++) {
+      if (i === pick) continue;
+      const ix = i % GRID, iy = (i / GRID) | 0;
+      if (wReg(ix, iy) === w1) l1.add(i);
+      if (wShift(ix, iy) === w2) l2.add(i);
+    }
+    const combined = new Set([...l1, ...l2]);
+    let overlap = 0;
+    l1.forEach(i => { if (l2.has(i)) overlap++; });
+    return { l1, l2, combined, overlap, total: GRID * GRID - 1 };
+  }, [pick]);
+
+  useEffect(() => { setPick(null); }, [imgVersion]);
+
+  useEffect(() => {
+    const c = canvasRef.current;
+    if (!c) return;
+    c.width = SIZE; c.height = SIZE;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#0a0e1a';
+    ctx.fillRect(0, 0, SIZE, SIZE);
+    if (image) {
+      const w = image.naturalWidth || image.width;
+      const h = image.naturalHeight || image.height;
+      const crop = Math.min(w, h);
+      ctx.drawImage(image, (w - crop) / 2, (h - crop) / 2, crop, crop, 0, 0, SIZE, SIZE);
+      ctx.fillStyle = 'rgba(10, 14, 26, 0.7)';
+      ctx.fillRect(0, 0, SIZE, SIZE);
+    }
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.18)';
+    ctx.lineWidth = 0.5;
+    for (let i = 0; i <= GRID; i++) {
+      const p = i * PATCH;
+      ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, SIZE); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(SIZE, p); ctx.stroke();
+    }
+    if (reach) {
+      for (let i = 0; i < GRID * GRID; i++) {
+        if (i === pick) continue;
+        const inL1 = reach.l1.has(i);
+        const inL2 = reach.l2.has(i);
+        if (!inL1 && !inL2) continue;
+        const px = (i % GRID) * PATCH;
+        const py = ((i / GRID) | 0) * PATCH;
+        const fill = inL1 && inL2
+          ? 'rgba(245, 158, 11, 0.50)'
+          : inL1
+            ? 'rgba(245, 158, 11, 0.30)'
+            : 'rgba(20, 184, 166, 0.50)';
+        ctx.fillStyle = fill;
+        ctx.fillRect(px, py, PATCH, PATCH);
+      }
+      const qx = (pick % GRID) * PATCH;
+      const qy = ((pick / GRID) | 0) * PATCH;
+      ctx.fillStyle = 'rgba(244, 63, 94, 0.55)';
+      ctx.fillRect(qx, qy, PATCH, PATCH);
+      ctx.strokeStyle = 'rgba(244, 63, 94, 1)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(qx + 1, qy + 1, PATCH - 2, PATCH - 2);
+    }
+  }, [image, reach, pick]);
+
+  const handleClick = (e) => {
+    const c = canvasRef.current;
+    if (!c) return;
+    const rect = c.getBoundingClientRect();
+    if (rect.width === 0) return;
+    const x = (e.clientX - rect.left) / rect.width * SIZE;
+    const y = (e.clientY - rect.top) / rect.height * SIZE;
+    const px = Math.min(GRID - 1, Math.max(0, (x / PATCH) | 0));
+    const py = Math.min(GRID - 1, Math.max(0, (y / PATCH) | 0));
+    const idx = py * GRID + px;
+    setPick(prev => prev === idx ? null : idx);
+  };
+
+  return (
+    <div className="grid sm:grid-cols-[auto_1fr] gap-4 items-start">
+      <div>
+        <canvas
+          ref={canvasRef}
+          onClick={handleClick}
+          className="w-[240px] h-[240px] rounded bg-slate-950 border border-slate-800 cursor-crosshair block"
+        />
+        <div className="text-[10px] font-mono text-slate-500 mt-1 text-center">
+          {pick == null ? 'click any patch on the cat' : `picked patch #${pick}`}
+        </div>
+      </div>
+      <div className="space-y-3">
+        {!reach ? (
+          <div className="text-[12px] text-slate-500 italic">
+            Pick a query patch to count how many others it reaches in two layers — try a corner, then the centre.
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="rounded p-2 bg-amber-500/[0.06] border border-amber-500/30">
+                <div className="text-amber-300 font-mono text-[10px]">Layer 1 · W-MSA</div>
+                <div className="text-slate-100 font-serif text-3xl leading-tight">{reach.l1.size}</div>
+                <div className="text-slate-500 text-[10px]">windowmates</div>
+              </div>
+              <div className="rounded p-2 bg-teal-500/[0.06] border border-teal-500/30">
+                <div className="text-teal-300 font-mono text-[10px]">Layer 2 · SW-MSA</div>
+                <div className="text-slate-100 font-serif text-3xl leading-tight">{reach.l2.size}</div>
+                <div className="text-slate-500 text-[10px]">windowmates</div>
+              </div>
+              <div className="rounded p-2 bg-rose-500/[0.06] border border-rose-500/40">
+                <div className="text-rose-300 font-mono text-[10px]">After 2 layers</div>
+                <div className="text-slate-100 font-serif text-3xl leading-tight">{reach.combined.size}</div>
+                <div className="text-slate-500 text-[10px]">unique / {reach.total}</div>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-3 text-[11px] font-mono">
+              <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm bg-rose-500/60"/>query</span>
+              <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm bg-amber-500/50"/>both layers</span>
+              <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm bg-amber-500/30"/>L1 only</span>
+              <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm bg-teal-500/50"/>L2 only · new via shift</span>
+            </div>
+            <p className="text-[12px] text-slate-300 leading-snug">
+              Without the shift this query would only reach <span className="text-amber-300 font-medium">{reach.l1.size}</span> patches.
+              The shift adds <span className="text-teal-300 font-medium">{reach.l2.size - reach.overlap}</span> brand-new neighbours;
+              over two layers the query touches <span className="text-rose-300 font-medium">{reach.combined.size}</span> of {reach.total} other patches
+              ({Math.round(reach.combined.size / reach.total * 100)}% of the image).
+              Try a corner patch — does it reach as many?
+            </p>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* SwinStages — four side-by-side thumbnails of the same image rendered at
    each Swin stage's grid resolution (56→28→14→7). Visualises how patch
    merging coarsens the spatial map while channels grow. Uses pixelated
@@ -4197,6 +4353,19 @@ function LiveDemoTab() {
           />
         </Card>
       </div>
+
+      {/* Swin · 2-layer reach lab — pick a patch, count its peers across
+          both layers. Concrete artefact for class discussion. */}
+      <Card className="p-3">
+        <div className="flex items-baseline justify-between mb-2 flex-wrap gap-2">
+          <div className="flex items-center gap-1.5">
+            <Tag color="teal">Swin</Tag>
+            <span className="text-[12px] text-slate-200">2-layer reach lab</span>
+          </div>
+          <span className="text-[10px] font-mono text-slate-500">click any patch · count its peers across both layers</span>
+        </div>
+        <SwinReachLab image={imgRef.current} imgVersion={imgVersion}/>
+      </Card>
 
       {/* Swin · 4 stages of patch merging. Same image rendered at 56→28→14→7
           to show the hierarchical resolution drop directly in the demo. */}
