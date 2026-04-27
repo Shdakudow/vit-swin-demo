@@ -4353,7 +4353,7 @@ function LiveDemoTab() {
   const [customSrc, setCustomSrc] = useState(null);
   const imgSrc = customSrc || GALLERY.find(g => g.id === galleryId)?.src;
 
-  const [patchSize, setPatchSize] = useState(36);
+  const [patchSize, setPatchSize] = useState(72);
   const [progress, setProgress] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState('Slow');
@@ -4712,7 +4712,7 @@ function LiveDemoTab() {
               <span className="font-mono text-amber-300 text-sm">{patchSize}</span>
             </div>
             <div className="flex gap-1 items-stretch">
-              {[16, 32, 48, 64].map(opt => (
+              {[48, 64, 72, 90, 120].map(opt => (
                 <button
                   key={opt}
                   onClick={() => { setPatchSize(opt); reset(); }}
