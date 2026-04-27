@@ -276,11 +276,23 @@ const Tag = ({ children, color = 'amber' }) => {
   );
 };
 
-const Eq = ({ children }) => (
-  <span className="font-mono text-amber-200/90 bg-amber-500/5 border border-amber-500/20 rounded px-1.5 py-0.5 text-[13px]">
-    {children}
-  </span>
-);
+/* Eq — inline LaTeX equation. Content must be a valid LaTeX string.
+   Falls back to monospace amber on render error so a malformed string
+   can't crash the page. */
+const Eq = ({ children }) => {
+  const src = typeof children === 'string'
+    ? children
+    : Array.isArray(children) ? children.join('') : String(children);
+  try {
+    return (
+      <span className="inline-block align-middle bg-amber-500/5 border border-amber-500/20 rounded px-1.5 py-0.5 text-amber-200">
+        <InlineMath math={src}/>
+      </span>
+    );
+  } catch {
+    return <span className="font-mono text-amber-200">{src}</span>;
+  }
+};
 
 const Section = ({ icon: Icon, title, kicker, children }) => (
   <section className="mb-10">
@@ -524,7 +536,7 @@ function OverviewTab() {
             </div>
             <h3 className="font-serif text-xl text-slate-100 mb-3">Swin Transformer</h3>
             <p className="text-slate-300 text-sm mb-4 leading-relaxed">
-              Restrict attention to non-overlapping local windows of size <Eq>M×M</Eq>, then alternate
+              Restrict attention to non-overlapping local windows of size <Eq>{String.raw`M \times M`}</Eq>, then alternate
               with <span className="text-teal-300">shifted</span> windows so information crosses window
               boundaries. Periodically merge patches to build a feature pyramid like a ConvNet.
             </p>
@@ -708,11 +720,11 @@ function PatchTab() {
       <Section icon={Grid3x3} kicker="02 — From image to sequence" title="Patch embedding">
         <p className="max-w-3xl mb-3">
           A Transformer expects a sequence of vectors. ViT produces this sequence the simplest way imaginable:
-          slice the image into a grid of <Eq>P × P</Eq> patches, flatten each patch into a vector of
-          length <Eq>P²·C</Eq>, and project it linearly to dimension <Eq>D</Eq>.
+          slice the image into a grid of <Eq>{String.raw`P \times P`}</Eq> patches, flatten each patch into a vector of
+          length <Eq>{String.raw`P^2 \cdot C`}</Eq>, and project it linearly to dimension <Eq>D</Eq>.
         </p>
         <p className="max-w-3xl text-slate-400 text-sm">
-          The standard ViT-Base uses <Eq>P=16</Eq> on 224×224 inputs, giving 196 tokens. Drag the
+          The standard ViT-Base uses <Eq>P=16</Eq> on <Eq>{String.raw`224 \times 224`}</Eq> inputs, giving 196 tokens. Drag the
           patch size below to feel the trade-off: smaller patches = more tokens = quadratically more
           attention compute.
         </p>
@@ -982,7 +994,7 @@ function PositionTab() {
           Self-attention is <em>permutation-equivariant</em>: if you shuffle the input tokens, the output
           shuffles the same way — but the actual content the model computes is the same. So the raw patch
           sequence carries <strong>no spatial information</strong>. The fix: add a learned vector
-          {' '}<Eq>E_pos[i]</Eq> to each token to mark "this came from position i".
+          {' '}<Eq>{String.raw`E_{\text{pos}}[i]`}</Eq> to each token to mark "this came from position i".
         </p>
 
         <div className="grid lg:grid-cols-2 gap-5">
@@ -1040,7 +1052,7 @@ function PositionTab() {
         </div>
         <p className="text-slate-300 mb-5 max-w-3xl leading-relaxed">
           The transformer eats N tokens and produces N output vectors. But classification needs one answer
-          per image. ViT prepends a single learnable <Eq>[CLS]</Eq> embedding (a learned parameter, not
+          per image. ViT prepends a single learnable <Eq>{String.raw`[\text{CLS}]`}</Eq> embedding (a learned parameter, not
           tied to any patch) to the sequence. Through self-attention, [CLS] gathers information from every
           patch token in every layer. After the final block, its output vector goes straight into a linear
           classifier — and the patch outputs are ignored for classification.
@@ -1824,7 +1836,7 @@ function MultiHeadTab() {
         </p>
         <p className="max-w-3xl mb-3 text-slate-300">
           Multi-head attention runs <Eq>h</Eq> independent attention computations in parallel, each on a
-          smaller subspace of dimension <Eq>d_k = D/h</Eq>, then concatenates them. Each head can
+          smaller subspace of dimension <Eq>{String.raw`d_k = D/h`}</Eq>, then concatenates them. Each head can
           specialize: one might track color similarity, another spatial proximity, another shape.
         </p>
         <div className="text-amber-200 bg-slate-950/60 border border-amber-500/20 rounded-lg p-4 max-w-3xl space-y-1">
@@ -2053,7 +2065,7 @@ function PipelineTab() {
         <p className="max-w-3xl mb-4 text-slate-300">
           We've now built every piece individually: patch embedding, position embeddings, [CLS], and
           multi-head self-attention. Time to assemble. Step through each stage below to see how the
-          tensor shapes evolve from <Eq>H × W × 3</Eq> pixels to <Eq>C</Eq> class logits. The encoder
+          tensor shapes evolve from <Eq>{String.raw`H \times W \times 3`}</Eq> pixels to <Eq>C</Eq> class logits. The encoder
           is just a stack of <Eq>L</Eq> identical blocks — each block does multi-head self-attention,
           then an MLP, both wrapped in residual connections and pre-norm LayerNorm.
         </p>
@@ -2418,7 +2430,7 @@ function PipelineDetail({ step }) {
       title: 'Input image',
       body: (
         <>
-          <p>The starting point is a raw image, typically <Eq>224×224×3</Eq> for ImageNet-scale models.</p>
+          <p>The starting point is a raw image, typically <Eq>{String.raw`224 \times 224 \times 3`}</Eq> for ImageNet-scale models.</p>
           <p className="mt-2 text-slate-400 text-sm">Standard ImageNet preprocessing applies: resize, center crop, normalize with channel-wise mean/std.</p>
         </>
       )
@@ -2427,7 +2439,7 @@ function PipelineDetail({ step }) {
       title: 'Patchify',
       body: (
         <>
-          <p>Reshape the image into <Eq>N = HW/P²</Eq> non-overlapping patches of size <Eq>P × P × 3</Eq>.</p>
+          <p>Reshape the image into <Eq>{String.raw`N = HW / P^2`}</Eq> non-overlapping patches of size <Eq>{String.raw`P \times P \times 3`}</Eq>.</p>
           <p className="mt-2 text-slate-400 text-sm">For ViT-Base at 224×224 with P=16, this produces 196 patches, each a 768-dim vector after flattening.</p>
           <p className="mt-2 font-mono text-amber-300 text-sm">In practice this is implemented as a single Conv2d with stride P and kernel P.</p>
         </>
@@ -2437,7 +2449,7 @@ function PipelineDetail({ step }) {
       title: 'Linear projection',
       body: (
         <>
-          <p>Each flat patch is projected to embedding dim D via a learnable matrix <Eq>E ∈ ℝ^(P²C × D)</Eq>.</p>
+          <p>Each flat patch is projected to embedding dim D via a learnable matrix <Eq>{String.raw`E \in \mathbb{R}^{P^2 C \times D}`}</Eq>.</p>
           <p className="mt-2 text-slate-400 text-sm">For ViT-Base, D = 768. This linear layer is shared across all patches.</p>
         </>
       )
@@ -2446,7 +2458,7 @@ function PipelineDetail({ step }) {
       title: 'Add [CLS] and position embeddings',
       body: (
         <>
-          <p>Prepend a learnable [CLS] token, then add learnable position embeddings <Eq>E_pos ∈ ℝ^((N+1)×D)</Eq>.</p>
+          <p>Prepend a learnable [CLS] token, then add learnable position embeddings <Eq>{String.raw`E_{\text{pos}} \in \mathbb{R}^{(N+1) \times D}`}</Eq>.</p>
           <p className="mt-2 text-slate-400 text-sm">The [CLS] token acts as a global aggregator — its final hidden state is what gets classified.</p>
         </>
       )
@@ -2581,8 +2593,8 @@ function WindowTab() {
         </p>
         <p className="max-w-3xl text-slate-300">
           Swin's first idea: stop attending globally. Partition the patches into non-overlapping windows
-          of <Eq>M × M</Eq> tokens, and let attention happen <span className="text-teal-300">only inside
-          each window</span>. Cost per layer drops to <Eq>O(M² · N)</Eq> — linear in the number of patches.
+          of <Eq>{String.raw`M \times M`}</Eq> tokens, and let attention happen <span className="text-teal-300">only inside
+          each window</span>. Cost per layer drops to <Eq>{String.raw`O(M^2 \cdot N)`}</Eq> — linear in the number of patches.
           The next tab fixes the obvious downside: now patches across window boundaries can't talk.
         </p>
       </Section>
@@ -2778,15 +2790,15 @@ function ShiftedTab() {
           stack. That kills the global reasoning we got from ViT for free.
         </p>
         <p className="max-w-3xl mb-3 text-slate-300">
-          Swin's fix: alternate two kinds of layers. Layer <Eq>l</Eq> uses regular window partitioning
-          (<span className="font-mono text-amber-300">W-MSA</span>). Layer <Eq>l+1</Eq> shifts the window
-          grid by <Eq>(⌊M/2⌋, ⌊M/2⌋)</Eq> pixels (<span className="font-mono text-amber-300">SW-MSA</span>).
-          Patches that were neighbors-across-a-wall in layer <Eq>l</Eq> now share a window in layer
-          <Eq>l+1</Eq>.
+          Swin's fix: alternate two kinds of layers. Layer <Eq>{String.raw`\ell`}</Eq> uses regular window partitioning
+          (<span className="font-mono text-amber-300">W-MSA</span>). Layer <Eq>{String.raw`\ell+1`}</Eq> shifts the window
+          grid by <Eq>{String.raw`(\lfloor M/2 \rfloor, \lfloor M/2 \rfloor)`}</Eq> pixels (<span className="font-mono text-amber-300">SW-MSA</span>).
+          Patches that were neighbors-across-a-wall in layer <Eq>{String.raw`\ell`}</Eq> now share a window in layer
+          <Eq>{String.raw`\ell+1`}</Eq>.
         </p>
         <p className="max-w-3xl text-slate-300">
           After two layers, every patch has effectively communicated with everything in a
-          <Eq>2M × 2M</Eq> region. Stack more, and the receptive field keeps growing — still at linear cost.
+          <Eq>{String.raw`2M \times 2M`}</Eq> region. Stack more, and the receptive field keeps growing — still at linear cost.
         </p>
       </Section>
 
@@ -2962,7 +2974,7 @@ function ShiftedTab() {
               <p className="text-slate-300 text-sm leading-relaxed">
                 Shifted windows would naïvely create more, irregularly-shaped windows on the borders.
                 Swin's trick: <span className="text-teal-300">cyclically shift</span> the entire feature
-                map by <Eq>(-⌊M/2⌋, -⌊M/2⌋)</Eq>, do regular W-MSA, then shift back. An
+                map by <Eq>{String.raw`(-\lfloor M/2 \rfloor, -\lfloor M/2 \rfloor)`}</Eq>, do regular W-MSA, then shift back. An
                 <span className="text-teal-300"> attention mask</span> prevents the wrap-around patches
                 from attending to each other (they aren't actually adjacent in the image).
               </p>
@@ -3046,7 +3058,7 @@ function HierarchyTab() {
         </p>
         <p className="max-w-3xl text-slate-300">
           Swin's last ingredient: a <span className="text-teal-300">patch-merging</span> layer between
-          stages. Take every <Eq>2×2</Eq> group of patches, concatenate their channels (<Eq>4C</Eq>),
+          stages. Take every <Eq>{String.raw`2 \times 2`}</Eq> group of patches, concatenate their channels (<Eq>4C</Eq>),
           then linearly project back to <Eq>2C</Eq>. Resolution halves; channels double; receptive field
           doubles. After four stages we have a CNN-style feature pyramid, but built from attention.
         </p>
