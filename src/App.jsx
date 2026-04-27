@@ -5,6 +5,21 @@ import {
   ArrowRight, Hash, Crosshair, Workflow, Microscope, Sparkles,
   Upload, Loader2, Brain, HelpCircle, Lightbulb, Check, X
 } from 'lucide-react';
+import { InlineMath, BlockMath } from 'react-katex';
+import 'katex/dist/katex.min.css';
+
+/* TeX inline + block — thin wrappers around react-katex with our colour
+   scheme. Use TeX for inline equations (\sqrt, \frac) and TeXBlock for
+   centred display equations. Falls back to a plain <span> on render
+   error so a malformed string can't break the page. */
+const TeX = ({ children }) => {
+  try { return <InlineMath math={typeof children === 'string' ? children : String(children)}/>; }
+  catch { return <span className="font-mono text-amber-200">{children}</span>; }
+};
+const TeXBlock = ({ children }) => {
+  try { return <BlockMath math={typeof children === 'string' ? children : String(children)}/>; }
+  catch { return <pre className="font-mono text-amber-200 text-sm">{children}</pre>; }
+};
 
 /* =========================================================
    Tiny linalg helpers (deterministic, seeded).
@@ -1444,8 +1459,8 @@ function AttentionTab() {
           To update token i, we compute how well its query matches every key (a similarity score), normalize
           via softmax, and use those weights to take a weighted average of the values.
         </p>
-        <div className="font-mono text-[14px] text-amber-200 bg-slate-950/60 border border-amber-500/20 rounded-lg p-4 max-w-2xl">
-          Attention(Q, K, V) = softmax(Q·Kᵀ / √d_k) · V
+        <div className="text-amber-200 bg-slate-950/60 border border-amber-500/20 rounded-lg p-4 max-w-2xl">
+          <TeXBlock>{String.raw`\text{Attention}(Q, K, V) = \text{softmax}\!\left(\frac{Q K^\top}{\sqrt{d_k}}\right) V`}</TeXBlock>
         </div>
       </Section>
 
@@ -1547,7 +1562,7 @@ function AttentionTab() {
           {step === 0 && Q && (
             <Card className="p-5">
               <div className="text-sm text-slate-200 mb-3">
-                Each input row <Eq>x_i ∈ ℝ^D</Eq> is multiplied by three learned matrices to produce its query, key, and value.
+                Each input row <TeX>{String.raw`x_i \in \mathbb{R}^D`}</TeX> is multiplied by three learned matrices to produce its query, key, and value.
               </div>
               <div className="grid grid-cols-3 gap-3">
                 <MatHeat label={`Q (${Q.rows}×${Q.cols})`} M={Q} color="amber" />
@@ -1559,8 +1574,8 @@ function AttentionTab() {
           <Card className="p-5">
             <div className="flex items-baseline justify-between gap-3 mb-3 flex-wrap">
               <div className="text-sm text-slate-200">
-                {step <= 0 && <>Attention matrix <Eq>A ∈ ℝ^(N×N)</Eq> · not yet computed</>}
-                {step === 1 && <>Raw scores <Eq>Q·Kᵀ / √d</Eq> · signed values, before softmax</>}
+                {step <= 0 && <>Attention matrix <TeX>{String.raw`A \in \mathbb{R}^{N \times N}`}</TeX> · not yet computed</>}
+                {step === 1 && <>Raw scores <TeX>{String.raw`Q K^\top / \sqrt{d}`}</TeX> · signed values, before softmax</>}
                 {step === 2 && <>Softmax weights <Eq>A</Eq> · each row sums to 100%</>}
                 {step === 3 && <>Aggregate · top-3 contributors per row highlighted</>}
                 {step === 4 && <>Inspect · click any row to set that as the query</>}
@@ -1812,9 +1827,9 @@ function MultiHeadTab() {
           smaller subspace of dimension <Eq>d_k = D/h</Eq>, then concatenates them. Each head can
           specialize: one might track color similarity, another spatial proximity, another shape.
         </p>
-        <div className="font-mono text-[13px] text-amber-200 bg-slate-950/60 border border-amber-500/20 rounded-lg p-4 max-w-3xl">
-          MultiHead(Q, K, V) = Concat(head₁, …, head_h)·W_O,&nbsp;&nbsp;
-          head_i = Attention(QW_Q^i, KW_K^i, VW_V^i)
+        <div className="text-amber-200 bg-slate-950/60 border border-amber-500/20 rounded-lg p-4 max-w-3xl space-y-1">
+          <TeXBlock>{String.raw`\text{MultiHead}(Q, K, V) = \text{Concat}(\text{head}_1, \ldots, \text{head}_h)\, W_O`}</TeXBlock>
+          <TeXBlock>{String.raw`\text{head}_i = \text{Attention}(Q W_Q^i,\, K W_K^i,\, V W_V^i)`}</TeXBlock>
         </div>
       </Section>
 
@@ -1857,7 +1872,9 @@ function MultiHeadTab() {
             <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-3">
               All heads · query #{selectedPatch}
             </div>
-            <div className={`grid gap-3`} style={{ gridTemplateColumns: `repeat(${Math.min(4, numHeads)}, minmax(0,1fr))` }}>
+            {/* Always grid to a fixed 4-column layout so a single head doesn't
+                blow up to fill the whole card width. */}
+            <div className="grid grid-cols-4 gap-3 max-w-[480px]">
               {heads.map((h, i) => (
                 <button
                   key={i}
@@ -2439,8 +2456,10 @@ function PipelineDetail({ step }) {
       body: (
         <>
           <p>Apply L identical blocks. Each block is:</p>
-          <pre className="font-mono text-[12px] text-amber-200 bg-slate-950/60 border border-amber-500/20 rounded-lg p-3 mt-2 overflow-x-auto">{`z'_l = MSA(LN(z_{l-1})) + z_{l-1}     # multi-head self-attention + residual
-z_l  = MLP(LN(z'_l))     + z'_l       # 2-layer MLP w/ GELU + residual`}</pre>
+          <div className="text-amber-200 bg-slate-950/60 border border-amber-500/20 rounded-lg p-3 mt-2 space-y-1">
+            <TeXBlock>{String.raw`z'_\ell = \text{MSA}(\text{LN}(z_{\ell-1})) + z_{\ell-1}`}</TeXBlock>
+            <TeXBlock>{String.raw`z_\ell  = \text{MLP}(\text{LN}(z'_\ell)) + z'_\ell`}</TeXBlock>
+          </div>
           <p className="mt-2 text-slate-400 text-sm">ViT-Base: L=12 blocks, h=12 heads, MLP hidden dim 3072.</p>
         </>
       )
