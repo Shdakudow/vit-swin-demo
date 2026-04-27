@@ -2027,7 +2027,7 @@ function PipelineTab() {
   const [playing, setPlaying] = useState(false);
   // Per-stage delay in ms. Default slow enough that students can read each
   // panel before it advances; can speed up for re-runs.
-  const [stageMs, setStageMs] = useState(2500);
+  const [stageMs, setStageMs] = useState(3000);
   const stages = [
     { name: 'Image', desc: 'H × W × 3', icon: Box },
     { name: 'Patchify', desc: 'N × (P²·3)', icon: Grid3x3 },
