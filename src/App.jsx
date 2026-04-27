@@ -1890,6 +1890,9 @@ function HeadMini({ attn, N, grid, query }) {
 function PipelineTab() {
   const [step, setStep] = useState(0);
   const [playing, setPlaying] = useState(false);
+  // Per-stage delay in ms. Default slow enough that students can read each
+  // panel before it advances; can speed up for re-runs.
+  const [stageMs, setStageMs] = useState(2500);
   const stages = [
     { name: 'Image', desc: 'H × W × 3', icon: Box },
     { name: 'Patchify', desc: 'N × (P²·3)', icon: Grid3x3 },
@@ -1905,9 +1908,9 @@ function PipelineTab() {
     const t = setTimeout(() => {
       if (step < stages.length - 1) setStep(s => s + 1);
       else setPlaying(false);
-    }, 900);
+    }, stageMs);
     return () => clearTimeout(t);
-  }, [playing, step, stages.length]);
+  }, [playing, step, stages.length, stageMs]);
 
   return (
     <div className="space-y-8">
@@ -1919,7 +1922,7 @@ function PipelineTab() {
           is just a stack of <Eq>L</Eq> identical blocks — each block does multi-head self-attention,
           then an MLP, both wrapped in residual connections and pre-norm LayerNorm.
         </p>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <button
             onClick={() => { setPlaying(!playing); if (step === stages.length - 1) setStep(0); }}
             className="px-4 py-2 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-200 hover:bg-amber-500/30 flex items-center gap-2 font-mono text-sm"
@@ -1936,6 +1939,22 @@ function PipelineTab() {
           <span className="text-[12px] font-mono text-slate-500">
             Stage {step + 1} / {stages.length}
           </span>
+          {/* Per-stage speed — students can pause-by-slowing rather than
+              hammering pause every stage. */}
+          <div className="flex items-center gap-2 ml-auto">
+            <label className="text-[11px] font-mono text-slate-400 uppercase tracking-wider">Stage speed</label>
+            <input
+              type="range"
+              min={400} max={5000} step={100}
+              value={stageMs}
+              onChange={e => setStageMs(Number(e.target.value))}
+              className="w-40 h-1 accent-amber-400 bg-slate-700 rounded-lg appearance-none cursor-pointer"
+              aria-label="Seconds per stage"
+            />
+            <span className="text-[11px] font-mono text-amber-300 tabular-nums w-14 text-right">
+              {(stageMs / 1000).toFixed(1)} s/stage
+            </span>
+          </div>
         </div>
       </Section>
 
@@ -3375,7 +3394,7 @@ const GALLERY = [
   { id: 'miaomiao', name: 'Miaomiao', src: import.meta.env.BASE_URL + 'miaomiao.jpg' },
 ];
 
-function drawScan(canvas, img, size, patchPx, progress, mode, shifted = false) {
+function drawScan(canvas, img, size, patchPx, progress, mode, shifted = false, pinnedQuery = null) {
   if (!canvas || !img) return;
   canvas.width = size;
   canvas.height = size;
@@ -3391,8 +3410,13 @@ function drawScan(canvas, img, size, patchPx, progress, mode, shifted = false) {
   const total = gridN * gridN;
   const seen = Math.min(total, Math.floor(progress * total));
   const cur = Math.max(0, seen - 1);
-  const cx = cur % gridN;
-  const cy = Math.floor(cur / gridN);
+  // Active query: pinned overrides the moving scan cursor so all its
+  // attention edges are drawn at once.
+  const activeIdx = pinnedQuery != null && pinnedQuery >= 0 && pinnedQuery < total
+    ? pinnedQuery
+    : (seen > 0 ? cur : -1);
+  const cx = activeIdx >= 0 ? activeIdx % gridN : 0;
+  const cy = activeIdx >= 0 ? Math.floor(activeIdx / gridN) : 0;
   const baseColor = mode === 'vit' ? '245, 158, 11' : '20, 184, 166';
 
   ctx.strokeStyle = `rgba(${baseColor}, 0.18)`;
@@ -3444,15 +3468,18 @@ function drawScan(canvas, img, size, patchPx, progress, mode, shifted = false) {
     }
   }
 
-  if (seen > 0) {
+  if (activeIdx >= 0) {
     const qx = cx * patchPx + patchPx / 2;
     const qy = cy * patchPx + patchPx / 2;
+    // Pinned: edges are drawn brighter and thicker so the spaghetti vs
+    // cluster contrast is unmissable.
+    const isPinned = pinnedQuery != null;
 
     if (mode === 'vit') {
-      ctx.strokeStyle = `rgba(${baseColor}, 0.16)`;
-      ctx.lineWidth = 0.5;
+      ctx.strokeStyle = `rgba(${baseColor}, ${isPinned ? 0.42 : 0.16})`;
+      ctx.lineWidth = isPinned ? 0.9 : 0.5;
       for (let j = 0; j < total; j++) {
-        if (j === cur) continue;
+        if (j === activeIdx) continue;
         const tx = (j % gridN) * patchPx + patchPx / 2;
         const ty = Math.floor(j / gridN) * patchPx + patchPx / 2;
         ctx.beginPath(); ctx.moveTo(qx, qy); ctx.lineTo(tx, ty); ctx.stroke();
@@ -3470,8 +3497,8 @@ function drawScan(canvas, img, size, patchPx, progress, mode, shifted = false) {
       ctx.strokeStyle = `rgba(${baseColor}, 1)`;
       ctx.lineWidth = 2.5;
       ctx.strokeRect(winX, winY, winSide, winSide);
-      ctx.strokeStyle = `rgba(${baseColor}, 0.5)`;
-      ctx.lineWidth = 0.7;
+      ctx.strokeStyle = `rgba(${baseColor}, ${isPinned ? 0.85 : 0.5})`;
+      ctx.lineWidth = isPinned ? 1.1 : 0.7;
       const minPy = Math.max(0, wy * winSize - halfWin);
       const maxPy = Math.min(gridN, (wy + 1) * winSize - halfWin);
       const minPx = Math.max(0, wx * winSize - halfWin);
@@ -3486,9 +3513,9 @@ function drawScan(canvas, img, size, patchPx, progress, mode, shifted = false) {
       }
     }
 
-    ctx.fillStyle = 'rgba(245, 158, 11, 0.35)';
+    ctx.fillStyle = 'rgba(244, 63, 94, 0.4)';
     ctx.fillRect(cx * patchPx, cy * patchPx, patchPx, patchPx);
-    ctx.strokeStyle = 'rgba(245, 158, 11, 1)';
+    ctx.strokeStyle = 'rgba(244, 63, 94, 1)';
     ctx.lineWidth = 2;
     ctx.strokeRect(cx * patchPx, cy * patchPx, patchPx, patchPx);
   }
@@ -3872,6 +3899,86 @@ function ClassContribution({ image, attentionRows, gridN, preds, status, statusM
   );
 }
 
+/* FlopsCostCard — translates the FLOPs gap into wall-clock seconds and
+   dollars on a real GPU. Slider for image side; live numbers update.
+   Makes "ViT is significantly more expensive" hit at the resolutions
+   that matter for real work (segmentation, detection at 1024+ px). */
+function FlopsCostCard() {
+  const [side, setSide] = useState(384);
+  const P = 16, M = 7, L = 12, D = 768;
+  const N = Math.round((side / P) ** 2);
+  // Attention FLOPs per image (Q,K,V,O projections + scaled-dot product). Approximate.
+  const vitFlops = L * (4 * N * D * D + 2 * N * N * D);
+  const swinFlops = L * (4 * N * D * D + 2 * M * M * N * D);
+  const ratio = swinFlops > 0 ? vitFlops / swinFlops : 0;
+  // A100: ~312 TFLOPs FP16; one image throughput on a single device.
+  const TFLOPs_PER_SEC = 312e12;
+  const vitSecPerImg = vitFlops / TFLOPs_PER_SEC;
+  const swinSecPerImg = swinFlops / TFLOPs_PER_SEC;
+  const N_IMG = 1e6;
+  const HOUR = 3600;
+  const RATE = 1.5; // $/hour for a single A100 — typical cloud
+  const vitCost = (vitSecPerImg * N_IMG / HOUR) * RATE;
+  const swinCost = (swinSecPerImg * N_IMG / HOUR) * RATE;
+  const fmtFlops = (v) => v >= 1e12 ? `${(v / 1e12).toFixed(2)} T` : v >= 1e9 ? `${(v / 1e9).toFixed(2)} G` : `${(v / 1e6).toFixed(0)} M`;
+  const fmtCost = (v) => v >= 1 ? `$${v.toFixed(2)}` : v >= 0.01 ? `$${v.toFixed(3)}` : `$${v.toExponential(1)}`;
+  return (
+    <div className="grid md:grid-cols-[200px_1fr] gap-5 items-start">
+      <div>
+        <Slider
+          label="Image side (px)"
+          value={side}
+          options={[224, 384, 512, 768, 1024, 1536]}
+          onChange={setSide}
+        />
+        <div className="mt-3 text-[12px] font-mono leading-relaxed">
+          <div className="text-slate-400">P = 16 · L = 12 · M = 7</div>
+          <div className="text-amber-300 mt-1">N = {N.toLocaleString()} patches</div>
+        </div>
+      </div>
+      <div className="space-y-2">
+        <div className="grid grid-cols-3 gap-2 text-center">
+          <div className="rounded p-2 bg-amber-500/[0.06] border border-amber-500/30">
+            <div className="text-amber-300 font-mono text-[10px]">ViT-Base · per image</div>
+            <div className="text-slate-100 font-serif text-2xl leading-tight">{fmtFlops(vitFlops)}</div>
+            <div className="text-slate-500 text-[10px]">FLOPs · attention only</div>
+          </div>
+          <div className="rounded p-2 bg-teal-500/[0.06] border border-teal-500/30">
+            <div className="text-teal-300 font-mono text-[10px]">Swin-T · per image</div>
+            <div className="text-slate-100 font-serif text-2xl leading-tight">{fmtFlops(swinFlops)}</div>
+            <div className="text-slate-500 text-[10px]">FLOPs · attention only</div>
+          </div>
+          <div className="rounded p-2 bg-rose-500/[0.06] border border-rose-500/40">
+            <div className="text-rose-300 font-mono text-[10px]">ViT / Swin</div>
+            <div className="text-slate-100 font-serif text-2xl leading-tight">{ratio < 10 ? ratio.toFixed(1) : Math.round(ratio).toLocaleString()}×</div>
+            <div className="text-slate-500 text-[10px]">more compute for ViT</div>
+          </div>
+        </div>
+        <div className="rounded p-2 bg-slate-800/40 border border-slate-700/60">
+          <div className="text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1">
+            Real money · 1M images on a single A100 @ ${RATE.toFixed(2)}/hr
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-center">
+            <div>
+              <div className="font-serif text-xl text-amber-200">{fmtCost(vitCost)}</div>
+              <div className="text-[10px] font-mono text-slate-500">ViT · {(vitSecPerImg * N_IMG / 60).toFixed(1)} min total</div>
+            </div>
+            <div>
+              <div className="font-serif text-xl text-teal-200">{fmtCost(swinCost)}</div>
+              <div className="text-[10px] font-mono text-slate-500">Swin · {(swinSecPerImg * N_IMG / 60).toFixed(1)} min total</div>
+            </div>
+          </div>
+        </div>
+        <p className="text-[11px] text-slate-400 leading-snug">
+          Attention pairs only — real models also pay for projections, MLPs, and patch merging
+          (Swin) which narrow the gap a bit. The point: at 224 the gap is small; push to 1024+ and
+          ViT becomes prohibitive while Swin barely moves.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 /* SwinReachLab — click any patch on the cat and the panel shows how
    many peers that query directly exchanges with in Layer 1 (W-MSA),
    Layer 2 (SW-MSA), and the union across both. The reach map colours
@@ -4083,6 +4190,31 @@ function LiveDemoTab() {
   // Swin-only layer toggle: 0 = W-MSA (regular), 1 = SW-MSA (shifted by ⌊M/2⌋).
   // Demonstrates the key Swin innovation directly inside the Live Demo.
   const [swinLayer, setSwinLayer] = useState(0);
+  // Click-to-pin a query patch on each scan: pin then "show all edges"
+  // draws every attention edge for that patch. Lets students compare
+  // ViT's spaghetti starburst vs Swin's tidy in-window cluster.
+  const [vitPinned, setVitPinned] = useState(null);
+  const [swinPinned, setSwinPinned] = useState(null);
+
+  // ----- Race-mode bookkeeping -----
+  // Both scans operate at the same op-rate. ViT does N ops/patch; Swin does
+  // M² ops/patch. So Swin's whole scan is ~N/M² times faster — at the same
+  // wall-clock progress, Swin finishes much earlier on the canvas. This is
+  // the visual "why Swin is faster" answer.
+  const SCAN_SIZE = 360;
+  const SCAN_GRID = Math.max(2, Math.floor(SCAN_SIZE / patchSize));
+  const SCAN_N = SCAN_GRID * SCAN_GRID;
+  const SCAN_M = 4;
+  const SWIN_SPEEDUP = Math.max(1, (SCAN_N - 1) / (SCAN_M * SCAN_M - 1));
+  const vitProgress = progress;
+  const swinProgress = Math.min(1, progress * SWIN_SPEEDUP);
+  // Live ops counters — both at the same op-rate; Swin caps out at its own total.
+  const vitTotalOps = SCAN_N * (SCAN_N - 1);
+  const swinTotalOps = SCAN_N * (SCAN_M * SCAN_M - 1);
+  const absOps = Math.floor(progress * vitTotalOps);
+  const vitOpsCount = Math.min(vitTotalOps, absOps);
+  const swinOpsCount = Math.min(swinTotalOps, absOps);
+  const opsRatio = swinOpsCount > 0 ? vitOpsCount / swinOpsCount : 0;
 
   // Real classifier — runs ViT-Base/16 in the browser via transformers.js.
   // Loads the ONNX weights once on mount (~88 MB, cached by the browser),
@@ -4111,10 +4243,10 @@ function LiveDemoTab() {
     img.onload = () => {
       imgRef.current = img;
       attnRef.current = computeAttention(img);
-      drawScan(vitRef.current, img, 360, patchSize, progress, 'vit');
-      drawScan(swinRef.current, img, 360, patchSize, progress, 'swin', swinLayer === 1);
-      drawMatrix(vitMatRef.current, attnRef.current?.vit, progress, 'vit');
-      drawMatrix(swinMatRef.current, attnRef.current?.swin, progress, 'swin');
+      drawScan(vitRef.current, img, 360, patchSize, vitProgress, 'vit', false, vitPinned);
+      drawScan(swinRef.current, img, 360, patchSize, swinProgress, 'swin', swinLayer === 1, swinPinned);
+      drawMatrix(vitMatRef.current, attnRef.current?.vit, vitProgress, 'vit');
+      drawMatrix(swinMatRef.current, attnRef.current?.swin, swinProgress, 'swin');
       setImgVersion(v => v + 1);
     };
     img.src = imgSrc;
@@ -4124,11 +4256,11 @@ function LiveDemoTab() {
 
   useEffect(() => {
     if (!imgRef.current) return;
-    drawScan(vitRef.current, imgRef.current, 360, patchSize, progress, 'vit');
-    drawScan(swinRef.current, imgRef.current, 360, patchSize, progress, 'swin', swinLayer === 1);
-    drawMatrix(vitMatRef.current, attnRef.current?.vit, progress, 'vit');
-    drawMatrix(swinMatRef.current, attnRef.current?.swin, progress, 'swin');
-  }, [patchSize, progress, swinLayer]);
+    drawScan(vitRef.current, imgRef.current, 360, patchSize, vitProgress, 'vit', false, vitPinned);
+    drawScan(swinRef.current, imgRef.current, 360, patchSize, swinProgress, 'swin', swinLayer === 1, swinPinned);
+    drawMatrix(vitMatRef.current, attnRef.current?.vit, vitProgress, 'vit');
+    drawMatrix(swinMatRef.current, attnRef.current?.swin, swinProgress, 'swin');
+  }, [patchSize, vitProgress, swinProgress, swinLayer, vitPinned, swinPinned]);
 
   useEffect(() => {
     if (!playing) return;
@@ -4270,12 +4402,27 @@ function LiveDemoTab() {
               <Tag color="amber">ViT</Tag>
               <span className="text-[12px] text-slate-200">Global</span>
             </div>
-            <span className="text-[10px] font-mono text-slate-500 uppercase">O(N²)</span>
+            <span className="text-[10px] font-mono text-amber-300/90 tabular-nums">
+              {vitOpsCount.toLocaleString()} ops · {Math.round(vitProgress * 100)}%
+            </span>
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div>
               <div className="text-[10px] font-mono text-slate-500 uppercase mb-0.5">scan</div>
-              <canvas ref={vitRef} className="w-full rounded bg-slate-950 aspect-square"/>
+              <canvas
+                ref={vitRef}
+                className="w-full rounded bg-slate-950 aspect-square cursor-crosshair"
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  if (rect.width === 0) return;
+                  const x = (e.clientX - rect.left) / rect.width * SCAN_SIZE;
+                  const y = (e.clientY - rect.top) / rect.height * SCAN_SIZE;
+                  const px = Math.min(SCAN_GRID - 1, Math.max(0, (x / patchSize) | 0));
+                  const py = Math.min(SCAN_GRID - 1, Math.max(0, (y / patchSize) | 0));
+                  const idx = py * SCAN_GRID + px;
+                  setVitPinned(prev => prev === idx ? null : idx);
+                }}
+              />
             </div>
             <div>
               <div className="text-[10px] font-mono text-slate-500 uppercase mb-0.5">matrix</div>
@@ -4283,7 +4430,9 @@ function LiveDemoTab() {
             </div>
           </div>
           <p className="text-[10px] text-slate-400 mt-2 leading-snug">
-            Every patch attends to every other · dense matrix.
+            {vitPinned != null
+              ? <>Pinned patch <span className="text-rose-300">#{vitPinned}</span> · {SCAN_N - 1} attention edges drawn (click again to unpin).</>
+              : <>Every patch attends to every other · dense matrix. <span className="text-slate-500">Click any patch to see all its edges.</span></>}
           </p>
         </Card>
 
@@ -4293,7 +4442,10 @@ function LiveDemoTab() {
               <Tag color="teal">Swin</Tag>
               <span className="text-[12px] text-slate-200">Windowed</span>
             </div>
-            <span className="text-[10px] font-mono text-slate-500 uppercase">O(N)</span>
+            <span className="text-[10px] font-mono text-teal-300/90 tabular-nums">
+              {swinOpsCount.toLocaleString()} ops · {Math.round(swinProgress * 100)}%
+              {swinProgress >= 1 && vitProgress < 1 && <span className="text-emerald-300 ml-1">✓ done</span>}
+            </span>
           </div>
           {/* Layer toggle: W-MSA ↔ SW-MSA. Swin's signature trick. */}
           <div className="flex gap-1 mb-2 bg-slate-800/40 rounded p-0.5 border border-slate-700/60">
@@ -4315,7 +4467,20 @@ function LiveDemoTab() {
           <div className="grid grid-cols-2 gap-2">
             <div>
               <div className="text-[10px] font-mono text-slate-500 uppercase mb-0.5">scan</div>
-              <canvas ref={swinRef} className="w-full rounded bg-slate-950 aspect-square"/>
+              <canvas
+                ref={swinRef}
+                className="w-full rounded bg-slate-950 aspect-square cursor-crosshair"
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  if (rect.width === 0) return;
+                  const x = (e.clientX - rect.left) / rect.width * SCAN_SIZE;
+                  const y = (e.clientY - rect.top) / rect.height * SCAN_SIZE;
+                  const px = Math.min(SCAN_GRID - 1, Math.max(0, (x / patchSize) | 0));
+                  const py = Math.min(SCAN_GRID - 1, Math.max(0, (y / patchSize) | 0));
+                  const idx = py * SCAN_GRID + px;
+                  setSwinPinned(prev => prev === idx ? null : idx);
+                }}
+              />
             </div>
             <div>
               <div className="text-[10px] font-mono text-slate-500 uppercase mb-0.5">matrix</div>
@@ -4323,9 +4488,11 @@ function LiveDemoTab() {
             </div>
           </div>
           <p className="text-[10px] text-slate-400 mt-2 leading-snug">
-            {swinLayer === 0
-              ? <>Layer 1 · regular windows. Block-diagonal matrix; patches near a wall can't talk.</>
-              : <>Layer 2 · windows shifted by ⌊M/2⌋. Look at the scan — old neighbors are now in different windows. Across two layers, info crosses every wall.</>}
+            {swinPinned != null
+              ? <>Pinned patch <span className="text-rose-300">#{swinPinned}</span> · {SCAN_M * SCAN_M - 1} edges drawn (only its window).</>
+              : swinLayer === 0
+                ? <>Layer 1 · regular windows. <span className="text-slate-500">Click any patch — it draws only {SCAN_M * SCAN_M - 1} edges.</span></>
+                : <>Layer 2 · shifted by ⌊M/2⌋. Old neighbors are now in different windows.</>}
           </p>
         </Card>
 
@@ -4365,6 +4532,18 @@ function LiveDemoTab() {
           <span className="text-[10px] font-mono text-slate-500">click any patch · count its peers across both layers</span>
         </div>
         <SwinReachLab image={imgRef.current} imgVersion={imgVersion}/>
+      </Card>
+
+      {/* ViT vs Swin · live FLOPs + real-money cost translator. */}
+      <Card className="p-3">
+        <div className="flex items-baseline justify-between mb-2 flex-wrap gap-2">
+          <div className="flex items-center gap-1.5">
+            <Tag color="rose">ViT vs Swin</Tag>
+            <span className="text-[12px] text-slate-200">FLOPs · time · $</span>
+          </div>
+          <span className="text-[10px] font-mono text-slate-500">drag the resolution → watch the gap explode</span>
+        </div>
+        <FlopsCostCard/>
       </Card>
 
       {/* Swin · 4 stages of patch merging. Same image rendered at 56→28→14→7
