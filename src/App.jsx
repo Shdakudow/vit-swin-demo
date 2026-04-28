@@ -4514,16 +4514,22 @@ function FlopsCostCard({ progress = 1 }) {
 
   return (
     <div className="space-y-3">
-      {/* Image-side slider sets the ceiling; progress (from above) sets where on the curve we are. */}
-      <div className="grid sm:grid-cols-[1fr_auto] gap-3 items-end">
+      {/* Image-side slider sets the ceiling; progress (from above) sets where on
+          the curve we are. Stack vertically below lg so the params readout
+          doesn't squash the slider on iPad-portrait-width cards. */}
+      <div className="grid lg:grid-cols-[1fr_auto] gap-2 lg:gap-3 lg:items-end">
         <Slider
           label="Image side (px) — sets ceiling"
           value={side}
           options={[224, 384, 512, 768, 1024, 1536]}
           onChange={setSide}
         />
-        <div className="text-[11px] font-mono text-slate-400 whitespace-nowrap">
-          P=16 · L=12 · M=7 · <span className="text-amber-300">N={N.toLocaleString()}</span> · scan {(p * 100).toFixed(0)}%
+        <div className="text-[11px] font-mono text-slate-400 leading-snug">
+          <span className="whitespace-nowrap">P=16 · L=12 · M=7</span>
+          <span className="mx-1 text-slate-600">·</span>
+          <span className="text-amber-300 whitespace-nowrap">N={N.toLocaleString()}</span>
+          <span className="mx-1 text-slate-600">·</span>
+          <span className="whitespace-nowrap">scan {(p * 100).toFixed(0)}%</span>
         </div>
       </div>
 
@@ -4608,7 +4614,8 @@ function FlopsRiseChart({ progress, vitFlopsPeak, swinFlopsPeak, swinKneeP, fmtF
   const ticks = [0, 0.25, 0.5, 0.75, 1].map(t => t * yMax);
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" preserveAspectRatio="none">
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" preserveAspectRatio="none"
+      style={{ height: '110px' }}>
       {ticks.map((t, i) => (
         <g key={i}>
           <line x1={PAD_L} y1={yScale(t)} x2={W - PAD_R} y2={yScale(t)}
@@ -5080,9 +5087,11 @@ function LiveDemoTab() {
       </Card>
 
       {/* Main row: ViT scan / Swin scan / predictions. On iPad portrait
-          (md) we drop to 2-col and let the predictions card span both
-          columns underneath, keeping each scan canvas readable. */}
-      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
+          (md) we drop to 2-col with predictions spanning the row below.
+          items-start prevents the shorter ViT card from stretching to
+          match Swin's extra layer-toggle height (was leaving empty
+          space at the bottom of the ViT card on iPad). */}
+      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3 items-start">
         <Card className="p-3">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-1.5">
@@ -5423,7 +5432,8 @@ function StorageRiseChart({ progress, vitTotal, swinTotal, vitOps, swinOps, N, M
           <div className="text-[10px] font-mono text-slate-500">peak {(vitTotal / Math.max(1, swinTotal)).toFixed(2)}×</div>
         </div>
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" preserveAspectRatio="none">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" preserveAspectRatio="none"
+        style={{ height: '120px' }}>
         {ticks.map((t, i) => (
           <g key={i}>
             <line x1={PAD_L} y1={yScale(t)} x2={W - PAD_R} y2={yScale(t)}
