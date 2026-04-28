@@ -5473,6 +5473,40 @@ function StorageRiseChart({ progress, vitTotal, swinTotal, vitOps, swinOps, N, M
       <p className="text-[10px] text-slate-400 mt-1 leading-snug">
         4 B per fp32 score · ViT stores N×N = {(N * N).toLocaleString()} · Swin only stores N·M² = {(N * M * M).toLocaleString()}.
       </p>
+
+      {/* Real-world extrapolation — anchors the abstract chart in
+          numbers from full-scale ViT-B/16 and Swin-T. Each row shows
+          per-layer-per-head attention bytes at three input sizes; the
+          headline number is the multiplicative ratio. */}
+      <div className="mt-2 rounded-md border border-slate-700/70 bg-slate-950/40 p-2">
+        <div className="text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1.5">
+          Same math · real model sizes (per layer · per head · 4 B per score)
+        </div>
+        <div className="grid grid-cols-[auto_1fr_1fr_auto] gap-x-2 gap-y-1 text-[11px] font-mono items-center">
+          <div className="text-slate-500 text-[10px]">image</div>
+          <div className="text-amber-300 text-[10px]">ViT-B/16 · N²·4B</div>
+          <div className="text-teal-300 text-[10px]">Swin-T · N·M²·4B</div>
+          <div className="text-rose-300 text-[10px] text-right">ratio</div>
+          {[
+            { side: 224,  vit: 150e3,    swin: 38e3   },
+            { side: 512,  vit: 4.19e6,   swin: 200e3  },
+            { side: 1024, vit: 67.1e6,   swin: 802e3  },
+          ].map(({ side, vit, swin }) => {
+            const fmt = b => b >= 1e6 ? (b / 1e6).toFixed(1) + ' MB' : b >= 1e3 ? (b / 1e3).toFixed(0) + ' KB' : b + ' B';
+            return (
+              <React.Fragment key={side}>
+                <div className="text-slate-300 tabular-nums">{side}²</div>
+                <div className="text-amber-200 tabular-nums">{fmt(vit)}</div>
+                <div className="text-teal-200 tabular-nums">{fmt(swin)}</div>
+                <div className="text-rose-200 tabular-nums text-right">{Math.round(vit / swin).toLocaleString()}×</div>
+              </React.Fragment>
+            );
+          })}
+        </div>
+        <div className="text-[10px] text-slate-500 italic mt-1.5 leading-snug">
+          ViT-Base has 12 layers × 12 heads, so multiply each ViT cell by ~144 — at 1024² that's ~9.7 GB of attention scores alone, before any other activations.
+        </div>
+      </div>
     </div>
   );
 }
