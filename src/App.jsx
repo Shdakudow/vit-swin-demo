@@ -787,6 +787,11 @@ function PatchTab() {
 
   return (
     <div className="space-y-8">
+      <HowToUseBadge instructions={[
+        'Drag the "Patch size" slider to see how the same image splits into more or fewer tokens.',
+        'Hover any patch on the grid — its actual RGB pixels are shown flattening into a vector and projecting to a D-dim embedding.',
+        'Toggle "Show grid" / "Show numbers" to focus on the visual flow vs. the math.',
+      ]}/>
       <Section icon={Grid3x3} kicker="02 — From image to sequence" title="Patch embedding">
         <p className="max-w-3xl mb-3">
           A Transformer expects a sequence of vectors. ViT produces this sequence the simplest way imaginable:
@@ -1210,6 +1215,11 @@ function PositionTab() {
 
   return (
     <div className="space-y-10">
+      <HowToUseBadge instructions={[
+        'Use the "Try it" toggles to see what happens when position embeddings are removed and patches are shuffled.',
+        'Pick an encoding from the Classic / Modern row (Sinusoidal, RoPE, ALiBi, Swin Relative Bias, etc.) — each has an arXiv link.',
+        'Click any patch in the 4×4 grid; the explorer shows how strongly the chosen encoding treats every other patch as "nearby".',
+      ]}/>
       <Section icon={Hash} kicker="03 — Spatial order, restored" title="Position embeddings & [CLS] token">
         <p className="max-w-3xl mb-3 text-slate-300">
           The last tab turned an image into N patch vectors. Two things are still missing before we can
@@ -1756,20 +1766,14 @@ function AttentionTab() {
         </div>
       </Section>
 
-      {/* How to use — single tight line so it doesn't take a whole row.
-          Small bouncing arrow draws the eye to the instructions, the
-          shimmer-cta wash gives it a soft alive feel. */}
-      <Card className="p-2 bg-amber-500/[0.04] border-amber-500/30 shimmer-cta">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-slate-200">
-          <span className="flex items-center gap-1.5 text-[10px] font-mono tracking-[0.2em] text-amber-400/80 uppercase">
-            <span className="anim-bounce" aria-hidden>👇</span>
-            How to use
-          </span>
-          <span><span className="font-mono text-amber-300">1.</span> Click any patch on the image (sets the <em>query</em>).</span>
-          <span><span className="font-mono text-amber-300">2.</span> Step <strong>1 → 5</strong> below to walk the math.</span>
-          <span><span className="font-mono text-amber-300">3.</span> The image has three matched pairs — red squares, blue circles, yellow triangles — the model should find the twin of each.</span>
-        </div>
-      </Card>
+      <div>
+        <HowToUseBadge instructions={[
+          'Click any patch on the image — it becomes the query patch.',
+          'Step through buttons 1 → 5 below to walk the math: project, score, softmax, aggregate.',
+          'The image has three matched pairs (red squares, blue circles, yellow triangles). The model should find each twin.',
+          'Drag the random-seed slider to confirm the broad pattern is stable across different W_Q, W_K, W_V.',
+        ]}/>
+      </div>
 
       <div className="flex gap-1.5 overflow-x-auto pb-1">
         {steps.map(s => (
@@ -1794,8 +1798,8 @@ function AttentionTab() {
             <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-2">
               {selectedPatch !== null
                 ? <>Query: patch <span className="text-amber-300">#{selectedPatch}</span></>
-                : <span className="text-amber-300 anim-soft-pulse inline-flex items-center gap-1">
-                    <span className="anim-bounce">👇</span> Click a patch below to start <span className="anim-bounce">👇</span>
+                : <span className="text-amber-300 inline-flex items-center gap-1.5 animate-pulse">
+                    👇 Click a patch below to start 👇
                   </span>}
             </div>
             <div
@@ -2103,6 +2107,11 @@ function MultiHeadTab() {
 
   return (
     <div className="space-y-8">
+      <HowToUseBadge instructions={[
+        'Adjust "Heads (h)" to compare 1, 4, 8, 12 attention heads — each subspace is concatenated into the same total D dimensions.',
+        'Click a query patch on the image. Each head\'s attention pattern lights up its own panel.',
+        'Notice how different heads tend to focus on different cues (colour, position, etc.) — that is the specialisation the math allows.',
+      ]}/>
       <Section icon={Network} kicker="05 — Many views, simultaneously" title="Multi-head attention">
         <p className="max-w-3xl mb-3 text-slate-300">
           The previous tab gave us <em>one</em> attention pattern — one way of saying "patches that look
@@ -2336,6 +2345,12 @@ function PipelineTab() {
 
   return (
     <div className="space-y-8">
+      <HowToUseBadge instructions={[
+        'Click any of the 7 stage chips to jump there directly — Image → Patchify → Linear → +CLS+pos → Encoder → CLS head → Softmax.',
+        'Or hit Play and watch the visual auto-advance through every stage.',
+        'Drag the "Stage speed" slider to slow it down or speed up replay. Reset returns to stage 1.',
+        'Stages 6–7 use real numbers — the CLS vector is multiplied by W to produce logits, then exp / Σ exp gives the displayed probabilities.',
+      ]}/>
       <Section icon={Workflow} kicker="06 — End to end" title="ViT forward pass">
         <p className="max-w-3xl mb-4 text-slate-300">
           We've now built every piece individually: patch embedding, position embeddings, [CLS], and
@@ -2994,6 +3009,11 @@ function WindowTab() {
 
   return (
     <div className="space-y-8">
+      <HowToUseBadge instructions={[
+        'Drag the "Window M" slider to repartition the 8×8 grid into M×M non-overlapping windows.',
+        'Click any patch to set it as the query — its windowmates light up. Patches outside its window stay dim.',
+        'The cost panel shows ViT vs windowed-attention compute side-by-side at the chosen M.',
+      ]}/>
       <Section icon={Box} kicker="07 — Locality is back" title="Window-based self-attention">
         <p className="max-w-3xl mb-3 text-slate-300">
           ViT's quadratic attention cost is fine at 224 × 224, but it explodes for high-resolution work
@@ -3192,6 +3212,12 @@ function ShiftedTab() {
 
   return (
     <div className="space-y-8">
+      <HowToUseBadge instructions={[
+        'Click the W-MSA / SW-MSA buttons to switch between regular and shifted windows manually.',
+        'Or leave Auto-alternate on (default) — every 3 s the windows flip between the two layers.',
+        'Click any patch to fix it as the query and watch which windowmates change after the shift.',
+        'The "Cyclic-shift trick" pane shows the implementation that keeps SW-MSA the same cost as W-MSA.',
+      ]}/>
       <Section icon={Move} kicker="08 — Cross-window connections" title="Shifted window attention">
         <p className="max-w-3xl mb-3 text-slate-300">
           The previous tab introduced a problem: with strict windows, two patches that sit on either
@@ -3458,6 +3484,11 @@ function HierarchyTab() {
 
   return (
     <div className="space-y-8">
+      <HowToUseBadge instructions={[
+        'Pick one of the four Swin-T stages (1 → 4) at the top — its resolution and token count update on the right.',
+        'In the Patch-merge playground, hover any merged "M" tile to see the four pre-merge patches that produced it.',
+        'Read the bottom flow diagram for the end-to-end Swin-T architecture: image → 4 stages → GAP+FC.',
+      ]}/>
       <Section icon={GitBranch} kicker="09 — Pyramid features" title="Patch merging & hierarchical stages">
         <p className="max-w-3xl mb-3 text-slate-300">
           We've made attention efficient (windows) and global (shifted windows). One thing is still
@@ -4905,6 +4936,7 @@ function LiveDemoTab() {
   const [progress, setProgress] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState('Slow');
+  const [playClicked, markPlayClicked] = usePlayClickedOnce();
   // Swin-only layer toggle: 0 = W-MSA (regular), 1 = SW-MSA (shifted by ⌊M/2⌋).
   // Demonstrates the key Swin innovation directly inside the Live Demo.
   const [swinLayer, setSwinLayer] = useState(0);
@@ -5073,9 +5105,18 @@ function LiveDemoTab() {
     <div className="space-y-2">
       {/* Compact header */}
       <div className="flex items-baseline justify-between flex-wrap gap-2">
-        <h2 className="font-serif text-xl text-slate-100 tracking-tight">
-          Watch the model classify
-        </h2>
+        <div className="flex items-center gap-2 flex-wrap">
+          <h2 className="font-serif text-xl text-slate-100 tracking-tight">
+            Watch the model classify
+          </h2>
+          <HowToUseBadge instructions={[
+            'Pick one of the three gallery images.',
+            'Hit Play (it shines until your first click) — the ViT and Swin scans animate together.',
+            'Watch the FLOPs/time/$ and Memory charts climb in lockstep with the scan.',
+            'Click any patch on either scan to pin a query and see all of its attention edges drawn at once.',
+            'Use the Patch (px) buttons to change patch size, or the Speed buttons to change how fast Play runs.',
+          ]}/>
+        </div>
         <span className="text-[11px] font-mono text-slate-400">
           ViT-Base/16 (ImageNet-1K) · runs in your browser · pick an image, hit play
         </span>
@@ -5272,12 +5313,19 @@ function LiveDemoTab() {
           Uses md:grid-cols-4 so iPad-portrait keeps the row on one line. */}
       <Card className="p-2">
         <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-2 items-end">
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
+            {/* First-time-only "click me" hint, points right at the Play
+                button. Disappears (forever, persisted) after first click. */}
+            {!playClicked && (
+              <span className="text-[11px] font-medium text-amber-300 anim-bounce flex items-center gap-1 select-none whitespace-nowrap">
+                Click me <span aria-hidden className="text-base leading-none">👉</span>
+              </span>
+            )}
             <button
-              onClick={() => { if (progress >= 1) setProgress(0); setPlaying(p => !p); }}
-              data-active={playing ? 'true' : 'false'}
-              className={`px-3 py-1.5 rounded-md bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-200 flex items-center gap-1.5 text-sm font-medium transition-all shimmer-cta lift-on-hover
-                ${playing ? '' : 'anim-glow-amber'}`}
+              onClick={() => { if (progress >= 1) setProgress(0); setPlaying(p => !p); markPlayClicked(); }}
+              data-active={playing || playClicked ? 'true' : 'false'}
+              className={`px-3 py-1.5 rounded-md bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-200 flex items-center gap-1.5 text-sm font-medium transition-all lift-on-hover
+                ${!playClicked ? 'shimmer-cta anim-glow-amber' : ''}`}
             >
               {playing ? <Pause size={13}/> : <Play size={13}/>}
               {playing ? 'Pause' : (progress >= 1 ? 'Replay' : 'Play')}
@@ -5384,6 +5432,54 @@ function LiveDemoTab() {
       </Card>
     </div>
   );
+}
+
+/* HowToUseBadge — small "★ HOW TO USE" decoration tucked into the
+   top-left of a tab. Click to expand a popover of numbered tab-specific
+   steps. Static (no shimmer / glow) so the eye still notices it without
+   the page feeling busy. */
+function HowToUseBadge({ instructions }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative inline-block">
+      <button
+        onClick={() => setOpen(o => !o)}
+        title="How to use this section"
+        aria-expanded={open}
+        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-amber-500/12 border border-amber-500/40 text-amber-200 text-[11px] font-mono uppercase tracking-[0.15em] hover:bg-amber-500/22 transition-all lift-on-hover"
+      >
+        <span className="text-amber-300 text-sm leading-none" aria-hidden>★</span>
+        How to use
+        <span className="opacity-60 text-[10px]">{open ? '▴' : '▾'}</span>
+      </button>
+      {open && (
+        <div className="absolute left-0 mt-1 w-80 max-w-[92vw] rounded-lg border border-amber-500/40 bg-slate-900/95 backdrop-blur p-3 shadow-xl shadow-black/40 text-[12px] text-slate-200 leading-relaxed z-30 space-y-1.5">
+          {instructions.map((step, i) => (
+            <div key={i} className="flex gap-2">
+              <span className="font-mono text-amber-300 shrink-0">{i + 1}.</span>
+              <span>{step}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* usePlayClickedOnce — persists "the user has hit Play at least once"
+   across reloads via localStorage. Used by the Live-Demo Play button to
+   stop shimmering / show the "click me" callout only on the very first
+   visit (per browser). */
+function usePlayClickedOnce() {
+  const [clicked, setClicked] = useState(() => {
+    try { return localStorage.getItem('live_play_clicked') === '1'; } catch { return false; }
+  });
+  const markClicked = () => {
+    if (clicked) return;
+    setClicked(true);
+    try { localStorage.setItem('live_play_clicked', '1'); } catch {}
+  };
+  return [clicked, markClicked];
 }
 
 /* StorageRiseChart — two area-line plots that grow with `progress`.
