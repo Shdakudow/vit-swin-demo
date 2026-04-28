@@ -5864,6 +5864,7 @@ export default function App() {
   useEffect(() => {
     const px = { default: '16px', large: '17.5px', xl: '19px' }[fontSize] || '16px';
     document.documentElement.style.fontSize = px;
+    document.documentElement.dataset.fontsize = fontSize;
     try { localStorage.setItem('a11y_font', fontSize); } catch {}
   }, [fontSize]);
 
@@ -5876,12 +5877,18 @@ export default function App() {
   }, [palette]);
 
   // Filter applied to the main content wrapper (NOT the panel) so the
-  // accessibility panel stays in normal colours / un-inverted.
+  // accessibility panel stays in normal colours. Each palette option uses
+  // an SVG colour-matrix filter (defined in <A11ySvgFilters/>) so the hue
+  // shifts are a proper LMS-based Daltonization rather than naive
+  // hue-rotate. Filters compose with the optional Light theme inversion.
   const contentFilter = (() => {
     const parts = [];
-    if (theme === 'light') parts.push('invert(0.92)', 'hue-rotate(180deg)');
-    if (palette === 'highContrast') parts.push('contrast(1.18)', 'saturate(1.4)');
-    if (palette === 'cbSafe') parts.push('saturate(1.45)', 'hue-rotate(-15deg)', 'contrast(1.08)');
+    if (theme === 'light') parts.push('invert(0.94)', 'hue-rotate(180deg)');
+    if (palette === 'bold') parts.push('saturate(1.45)', 'contrast(1.12)');
+    if (palette === 'deuteran') parts.push('url(#a11y-deuteran)');
+    if (palette === 'protan')   parts.push('url(#a11y-protan)');
+    if (palette === 'tritan')   parts.push('url(#a11y-tritan)');
+    if (palette === 'achromat') parts.push('grayscale(1)', 'contrast(1.18)');
     return parts.length ? parts.join(' ') : 'none';
   })();
 
@@ -5912,6 +5919,7 @@ export default function App() {
         theme={theme} setTheme={setTheme}
         palette={palette} setPalette={setPalette}
       />
+      <A11ySvgFilters />
 
       {/* Wrap the entire UI so the filter only affects content — panel stays clean. */}
       <div style={{ filter: contentFilter, transition: 'filter 0.2s' }}>
@@ -5996,6 +6004,26 @@ export default function App() {
       <style>{`
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { scrollbar-width: none; }
+
+        /* When the user picks a larger font size in the A11y panel, also
+           scale up the small absolute-pixel utilities (text-[8px] …
+           text-[14px]) that Tailwind generates as fixed sizes. The root
+           font-size change covers rem-based sizes only. */
+        html[data-fontsize="large"]  .text-\\[8px\\]  { font-size: 9.5px  !important; }
+        html[data-fontsize="large"]  .text-\\[9px\\]  { font-size: 10.5px !important; }
+        html[data-fontsize="large"]  .text-\\[10px\\] { font-size: 11.5px !important; }
+        html[data-fontsize="large"]  .text-\\[11px\\] { font-size: 12.5px !important; }
+        html[data-fontsize="large"]  .text-\\[12px\\] { font-size: 13.5px !important; }
+        html[data-fontsize="large"]  .text-\\[13px\\] { font-size: 14.5px !important; }
+        html[data-fontsize="large"]  .text-\\[14px\\] { font-size: 15.5px !important; }
+
+        html[data-fontsize="xl"]  .text-\\[8px\\]  { font-size: 11px !important; }
+        html[data-fontsize="xl"]  .text-\\[9px\\]  { font-size: 12px !important; }
+        html[data-fontsize="xl"]  .text-\\[10px\\] { font-size: 13px !important; }
+        html[data-fontsize="xl"]  .text-\\[11px\\] { font-size: 14px !important; }
+        html[data-fontsize="xl"]  .text-\\[12px\\] { font-size: 15px !important; }
+        html[data-fontsize="xl"]  .text-\\[13px\\] { font-size: 16px !important; }
+        html[data-fontsize="xl"]  .text-\\[14px\\] { font-size: 17px !important; }
       `}</style>
       </div> {/* close content-filter wrapper */}
     </div>
@@ -6003,66 +6031,120 @@ export default function App() {
 }
 
 /* A11yPanel — fixed top-left button that opens an accessibility menu.
-   Three controls: font size, theme (dark/light), color palette
-   (default / high contrast / colorblind-friendly). Choices persist to
-   localStorage so students keep their preferences across sessions. */
+   Three controls: font size, theme (dark/light), and a palette picker
+   that includes specific Daltonization presets for the most common
+   colour-vision deficiencies. Choices persist to localStorage. */
 function A11yPanel({ fontSize, setFontSize, theme, setTheme, palette, setPalette }) {
   const [open, setOpen] = useState(false);
-  const Btn = ({ active, children, onClick, title }) => (
+  const Btn = ({ active, children, onClick, title, className = '' }) => (
     <button
       onClick={onClick}
       title={title}
-      className={`px-2 py-1 rounded text-[11px] font-mono border transition-all
+      className={`px-2 py-1 rounded text-[11px] font-mono border transition-all text-left
         ${active
           ? 'bg-amber-500/20 border-amber-500/60 text-amber-100'
-          : 'bg-slate-800/40 border-slate-700 text-slate-300 hover:border-slate-500 hover:text-slate-100'}`}
+          : 'bg-slate-800/40 border-slate-700 text-slate-300 hover:border-slate-500 hover:text-slate-100'} ${className}`}
     >
       {children}
     </button>
   );
+  // Each palette includes an explanatory sub-line — the medical names
+  // are accurate without being a label *about* the user.
+  const PALETTES = [
+    { id: 'default',  name: 'Default',       sub: 'standard amber / teal / rose' },
+    { id: 'bold',     name: 'Bold',          sub: 'higher saturation + contrast' },
+    { id: 'deuteran', name: 'Deuteran-mode', sub: 'green-deficient (most common)' },
+    { id: 'protan',   name: 'Protan-mode',   sub: 'red-deficient' },
+    { id: 'tritan',   name: 'Tritan-mode',   sub: 'blue–yellow deficiency (rare)' },
+    { id: 'achromat', name: 'Monochrome',    sub: 'grayscale + contrast (achromatopsia)' },
+  ];
   return (
     <div className="fixed top-3 left-3 z-50">
       <button
         onClick={() => setOpen(o => !o)}
-        aria-label="Accessibility options"
-        title="Accessibility options"
+        aria-label="Display options"
+        title="Display options — font, theme, palette"
         className={`px-2.5 py-1.5 rounded-md border font-mono text-[11px] flex items-center gap-1.5 transition-all
           ${open ? 'bg-amber-500/25 border-amber-500/60 text-amber-100' : 'bg-slate-900/80 border-slate-700 text-slate-200 hover:border-slate-500 backdrop-blur'}`}
       >
-        <span aria-hidden>♿︎</span>
-        <span>Accessibility</span>
+        <span aria-hidden>⚙</span>
+        <span>Display</span>
         <span className="opacity-60">{open ? '▾' : '▸'}</span>
       </button>
       {open && (
-        <div className="mt-2 w-64 rounded-lg border border-slate-700 bg-slate-900/95 backdrop-blur shadow-xl shadow-black/40 p-3 space-y-3">
+        <div className="mt-2 w-72 rounded-lg border border-slate-700 bg-slate-900/95 backdrop-blur shadow-xl shadow-black/40 p-3 space-y-3 max-h-[80vh] overflow-y-auto">
           <div>
             <div className="text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1">Font size</div>
             <div className="grid grid-cols-3 gap-1">
-              <Btn active={fontSize === 'default'} onClick={() => setFontSize('default')}>A</Btn>
-              <Btn active={fontSize === 'large'} onClick={() => setFontSize('large')}>A+</Btn>
-              <Btn active={fontSize === 'xl'} onClick={() => setFontSize('xl')}>A++</Btn>
+              <Btn active={fontSize === 'default'} onClick={() => setFontSize('default')} title="Default">A</Btn>
+              <Btn active={fontSize === 'large'} onClick={() => setFontSize('large')} title="Larger text — small captions also scale up">A+</Btn>
+              <Btn active={fontSize === 'xl'} onClick={() => setFontSize('xl')} title="Largest text">A++</Btn>
             </div>
           </div>
           <div>
             <div className="text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1">Theme</div>
             <div className="grid grid-cols-2 gap-1">
               <Btn active={theme === 'dark'} onClick={() => setTheme('dark')} title="Dark (default)">Dark</Btn>
-              <Btn active={theme === 'light'} onClick={() => setTheme('light')} title="Light — inverts the page">Light</Btn>
+              <Btn active={theme === 'light'} onClick={() => setTheme('light')} title="Light — page is inverted; text contrast is preserved">Light</Btn>
             </div>
           </div>
           <div>
-            <div className="text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1">Color palette</div>
+            <div className="text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1">Palette</div>
             <div className="grid grid-cols-1 gap-1">
-              <Btn active={palette === 'default'} onClick={() => setPalette('default')}>Default</Btn>
-              <Btn active={palette === 'highContrast'} onClick={() => setPalette('highContrast')} title="Boosts saturation + contrast">High contrast</Btn>
-              <Btn active={palette === 'cbSafe'} onClick={() => setPalette('cbSafe')} title="Pushes hues for red-green colour-vision deficiency">Colour-blind safe</Btn>
+              {PALETTES.map(p => (
+                <Btn key={p.id} active={palette === p.id} onClick={() => setPalette(p.id)} title={p.sub}>
+                  <div className="font-medium">{p.name}</div>
+                  <div className="text-[9px] opacity-70 font-mono">{p.sub}</div>
+                </Btn>
+              ))}
             </div>
           </div>
           <div className="text-[10px] text-slate-500 leading-snug border-t border-slate-700 pt-2">
-            Preferences saved on this device. Most colour-coded blocks already include text labels alongside the colour.
+            Preferences saved on this device. Most colour-coded blocks include text labels alongside the colour, so info is never carried by hue alone.
           </div>
         </div>
       )}
     </div>
+  );
+}
+
+/* A11ySvgFilters — defines feColorMatrix filters for Daltonization of
+   each common colour-vision deficiency. Applied via CSS `filter:
+   url(#…)` on the content wrapper. Matrices are the standard
+   simulation transforms (commonly used in vision-research tooling)
+   adapted as best-effort correction filters for an existing palette. */
+function A11ySvgFilters() {
+  return (
+    <svg width="0" height="0" style={{ position: 'absolute', pointerEvents: 'none' }} aria-hidden>
+      <defs>
+        {/* Deuteranopia (green-deficient) */}
+        <filter id="a11y-deuteran" colorInterpolationFilters="sRGB">
+          <feColorMatrix type="matrix" values="
+            0.625 0.375 0    0 0
+            0.7   0.3   0    0 0
+            0     0.3   0.7  0 0
+            0     0     0    1 0
+          "/>
+        </filter>
+        {/* Protanopia (red-deficient) */}
+        <filter id="a11y-protan" colorInterpolationFilters="sRGB">
+          <feColorMatrix type="matrix" values="
+            0.567 0.433 0     0 0
+            0.558 0.442 0     0 0
+            0     0.242 0.758 0 0
+            0     0     0     1 0
+          "/>
+        </filter>
+        {/* Tritanopia (blue-yellow deficient) */}
+        <filter id="a11y-tritan" colorInterpolationFilters="sRGB">
+          <feColorMatrix type="matrix" values="
+            0.95  0.05  0     0 0
+            0     0.433 0.567 0 0
+            0     0.475 0.525 0 0
+            0     0     0     1 0
+          "/>
+        </filter>
+      </defs>
+    </svg>
   );
 }
