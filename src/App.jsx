@@ -1742,59 +1742,50 @@ function AttentionTab() {
   ];
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-4">
       <Section icon={Eye} kicker="04 — The core mechanism" title="Scaled dot-product self-attention">
-        <p className="max-w-3xl mb-3">
+        <p className="max-w-3xl mb-2 text-sm">
           Every token produces three vectors: a <span className="text-amber-300">query</span> Q,
           a <span className="text-teal-300">key</span> K, and a <span className="text-rose-300">value</span> V.
           To update token i, we compute how well its query matches every key (a similarity score), normalize
           via softmax, and use those weights to take a weighted average of the values.
         </p>
-        <div className="text-amber-200 bg-slate-950/60 border border-amber-500/20 rounded-lg p-4 max-w-2xl">
+        <div className="text-amber-200 bg-slate-950/60 border border-amber-500/20 rounded-lg p-2 max-w-xl">
           <TeXBlock>{String.raw`\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{Q K^{\top}}{\sqrt{d_k}}\right) V`}</TeXBlock>
         </div>
       </Section>
 
-      {/* How to use — clear three-step instruction so the demo isn't a guessing game */}
-      <Card className="p-3 bg-amber-500/[0.04] border-amber-500/30">
-        <div className="text-[11px] font-mono tracking-[0.2em] text-amber-400/80 uppercase mb-2">How to use this demo</div>
-        <ol className="grid sm:grid-cols-3 gap-3 text-[13px] text-slate-200">
-          <li className="flex gap-2">
-            <span className="font-mono text-amber-300 shrink-0">1.</span>
-            <span><span className="text-amber-300">Click any patch</span> on the image to set it as the <em>query</em> — the patch you're asking "what should I look at?".</span>
-          </li>
-          <li className="flex gap-2">
-            <span className="font-mono text-amber-300 shrink-0">2.</span>
-            <span>Step through buttons <strong>1 → 5</strong> below to walk the math: project, score, softmax, aggregate.</span>
-          </li>
-          <li className="flex gap-2">
-            <span className="font-mono text-amber-300 shrink-0">3.</span>
-            <span>The image has two pairs of identical objects (red squares, blue circles). Watch the model find them.</span>
-          </li>
-        </ol>
+      {/* How to use — single tight line so it doesn't take a whole row. */}
+      <Card className="p-2 bg-amber-500/[0.04] border-amber-500/30">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-slate-200">
+          <span className="text-[10px] font-mono tracking-[0.2em] text-amber-400/80 uppercase">How to use</span>
+          <span><span className="font-mono text-amber-300">1.</span> Click any patch on the image (sets the <em>query</em>).</span>
+          <span><span className="font-mono text-amber-300">2.</span> Step <strong>1 → 5</strong> below to walk the math.</span>
+          <span><span className="font-mono text-amber-300">3.</span> The image has matched red squares + blue circles — the model should find the pairs.</span>
+        </div>
       </Card>
 
-      <div className="flex gap-2 mb-2 overflow-x-auto pb-2">
+      <div className="flex gap-1.5 overflow-x-auto pb-1">
         {steps.map(s => (
           <button
             key={s.n}
             onClick={() => setStep(s.n)}
-            className={`flex-shrink-0 px-3 py-2 rounded-lg border text-left transition-all min-w-[140px]
+            className={`flex-shrink-0 px-2.5 py-1.5 rounded-lg border text-left transition-all min-w-[110px]
               ${step === s.n
                 ? 'bg-amber-500/15 border-amber-500/50 text-amber-100'
                 : 'bg-slate-800/40 border-slate-700 text-slate-400 hover:border-slate-600'}`}
           >
             <div className="text-[10px] font-mono uppercase tracking-wider opacity-70">Step {s.n + 1}</div>
-            <div className="font-medium text-sm">{s.label}</div>
-            <div className="text-[10px] font-mono mt-1 opacity-70">{s.desc}</div>
+            <div className="font-medium text-[13px]">{s.label}</div>
+            <div className="text-[10px] font-mono mt-0.5 opacity-70 truncate">{s.desc}</div>
           </button>
         ))}
       </div>
 
-      <div className="grid lg:grid-cols-[auto_1fr] gap-6">
-        <div className="space-y-4">
-          <Card className="p-5">
-            <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-3">
+      <div className="grid lg:grid-cols-[auto_1fr] gap-4">
+        <div className="space-y-3">
+          <Card className="p-3">
+            <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-2">
               {selectedPatch !== null
                 ? <>Query: patch <span className="text-amber-300">#{selectedPatch}</span></>
                 : <span className="text-amber-300 animate-pulse">↓ Click a patch below to start ↓</span>}
@@ -1809,7 +1800,7 @@ function AttentionTab() {
               <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
               <canvas ref={overlayRef} className="absolute inset-0 w-full h-full pointer-events-none" />
             </div>
-            <div className="mt-4 space-y-3">
+            <div className="mt-2 space-y-2">
               <Slider
                 label="Patch size (px)"
                 value={patchSize}
@@ -1818,58 +1809,55 @@ function AttentionTab() {
               />
               <Slider label="Random seed (W_Q, W_K, W_V)" value={seed} min={1} max={50} onChange={setSeed} />
             </div>
-            <div className="mt-3 text-[12px] text-slate-300 leading-relaxed min-h-[2.5em]">
+            <div className="mt-2 text-[12px] text-slate-300 leading-snug min-h-[2.2em]">
               {selectedPatch === null
-                ? <span className="text-amber-200/80">Pick a patch — try one of the red squares or blue circles for the cleanest result.</span>
+                ? <span className="text-amber-200/80">Pick a patch — try a red square or blue circle for the cleanest result.</span>
                 : step === 0
-                  ? <>Step 1 · <span className="text-amber-300">Project</span> — every patch produces three vectors: Q (query), K (key), V (value). The matrices on the right show all three.</>
+                  ? <>Step 1 · <span className="text-amber-300">Project</span> — every patch produces Q, K, V vectors (matrices shown right).</>
                   : step === 1
-                    ? <>Step 2 · <span className="text-amber-300">Score</span> — your query's dot product with every key. Amber = positive (similar), blue = negative (dissimilar). <em>Not</em> a probability yet.</>
+                    ? <>Step 2 · <span className="text-amber-300">Score</span> — query · key dot product. Amber = +, blue = −. Not yet a probability.</>
                     : step === 2
-                      ? <>Step 3 · <span className="text-amber-300">Softmax</span> — scores normalised so they sum to 100%. The peaks are where attention concentrates.</>
+                      ? <>Step 3 · <span className="text-amber-300">Softmax</span> — rows sum to 100%. Peaks = where attention concentrates.</>
                       : step === 3
-                        ? <>Step 4 · <span className="text-amber-300">Aggregate</span> — only the top-5 contributing patches stay bright. The output for your query is a weighted blend of <em>their</em> values.</>
-                        : <>Step 5 · <span className="text-amber-300">Inspect</span> — try other patches. The model should pair red↔red and blue↔blue.</>}
+                        ? <>Step 4 · <span className="text-amber-300">Aggregate</span> — top-5 patches stay bright; output is a blend of <em>their</em> values.</>
+                        : <>Step 5 · <span className="text-amber-300">Inspect</span> — try other patches. Should pair red↔red, blue↔blue.</>}
             </div>
           </Card>
 
-          {/* Top-attended patches — pulled into the LEFT column so it's visible
-              right next to the image, even when the matrix card is tall. */}
           {selectedPatch !== null && attn && (
-            <Card className="p-5">
-              <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-3">
+            <Card className="p-3">
+              <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-2">
                 Top patches that query #{selectedPatch} attends to
               </div>
               <TopAttended attn={attn} N={N} query={selectedPatch} grid={grid} patchSize={patchSize} />
-              <div className="text-[11px] text-slate-400 italic mt-3 leading-relaxed">
-                If your query was on a red square, you should see the OTHER red square near the top of this list.
-                That's "patches that look alike attend to each other".
+              <div className="text-[11px] text-slate-400 italic mt-2 leading-snug">
+                Query on a red square should see the other red square near the top — that's "patches that look alike attend to each other".
               </div>
             </Card>
           )}
         </div>
 
-        <div className="space-y-4">
+        <div className="space-y-3">
           {step === 0 && Q && (
-            <Card className="p-5">
-              <div className="text-sm text-slate-200 mb-3">
+            <Card className="p-3">
+              <div className="text-[13px] text-slate-200 mb-2">
                 Each input row <TeX>{String.raw`x_i \in \mathbb{R}^D`}</TeX> is multiplied by three learned matrices to produce its query, key, and value.
               </div>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-3 gap-2">
                 <MatHeat label={`Q (${Q.rows}×${Q.cols})`} M={Q} color="amber" />
                 <MatHeat label={`K (${K.rows}×${K.cols})`} M={K} color="teal" />
                 <MatHeat label={`V (${V.rows}×${V.cols})`} M={V} color="rose" />
               </div>
             </Card>
           )}
-          <Card className="p-5">
-            <div className="flex items-baseline justify-between gap-3 mb-3 flex-wrap">
-              <div className="text-sm text-slate-200">
+          <Card className="p-3">
+            <div className="flex items-baseline justify-between gap-3 mb-2 flex-wrap">
+              <div className="text-[13px] text-slate-200">
                 {step <= 0 && <>Attention matrix <TeX>{String.raw`A \in \mathbb{R}^{N \times N}`}</TeX> · not yet computed</>}
-                {step === 1 && <>Raw scores <TeX>{String.raw`Q K^\top / \sqrt{d}`}</TeX> · signed values, before softmax</>}
-                {step === 2 && <>Softmax weights <Eq>A</Eq> · each row sums to 100%</>}
+                {step === 1 && <>Raw scores <TeX>{String.raw`Q K^\top / \sqrt{d}`}</TeX> · signed, pre-softmax</>}
+                {step === 2 && <>Softmax weights <Eq>A</Eq> · rows sum to 100%</>}
                 {step === 3 && <>Aggregate · top-3 contributors per row highlighted</>}
-                {step === 4 && <>Inspect · click any row to set that as the query</>}
+                {step === 4 && <>Inspect · click a row to make it the query</>}
               </div>
               <span className="font-mono text-[10px] text-slate-500">N = {N}</span>
             </div>
@@ -1881,10 +1869,10 @@ function AttentionTab() {
               step={step}
               onCellClick={setSelectedPatch}
             />
-            <div className="mt-3 text-[11px] text-slate-500 italic leading-relaxed">
-              {step === 1 && 'Amber = positive, blue = negative. These are not probabilities yet — softmax hasn\'t been applied.'}
-              {step === 2 && 'Each row is a probability distribution: how patch i splits its attention over all keys j.'}
-              {step === 3 && 'Most of the attention mass usually concentrates on a handful of patches; the output is a weighted sum of just those.'}
+            <div className="mt-2 text-[11px] text-slate-500 italic leading-snug">
+              {step === 1 && 'Amber = positive, blue = negative. Not probabilities yet — softmax hasn\'t been applied.'}
+              {step === 2 && 'Each row is a probability distribution over all keys j.'}
+              {step === 3 && 'Mass concentrates on a few patches; the output is a weighted sum over just those.'}
               {step === 4 && 'Click a row to focus the canvas overlay on that query patch.'}
               {step <= 0 && 'Walk the steps above to build the matrix.'}
             </div>
@@ -2640,67 +2628,201 @@ function PipelineVisual({ step }) {
     );
   }
 
-  // ---- Stage 6: CLS head
+  // Concrete, deterministic numbers used by stages 6 & 7. These are stand-ins
+  // for what would actually flow out of the encoder — small enough to read
+  // on screen, but follow the math: logits = CLS · W ; probs = softmax(logits).
+  const CLS_VEC = [+0.8, -1.2, +0.3, +1.5, -0.2, +0.6, -0.9, +1.1, +0.5, -0.7, +0.3, -0.4];
+  const CLASS_LABELS = ['tabby cat', 'tiger cat', 'Egyptian cat', 'lynx', 'Persian cat'];
+  const LOGITS = [+3.10, +1.32, +0.45, -0.18, -0.42];
+  const expL = LOGITS.map(z => Math.exp(z));
+  const Z = expL.reduce((a, b) => a + b, 0);
+  const PROBS_NUM = expL.map(e => e / Z);
+
+  // ---- Stage 6: CLS head — extract CLS vector, multiply by W, get logits.
   if (step === 5) {
+    const maxAbsCls = Math.max(...CLS_VEC.map(Math.abs));
+    const maxAbsLogit = Math.max(...LOGITS.map(Math.abs));
     return (
-      <div className="flex items-center justify-center gap-6 min-h-[260px]">
-        <div>
+      <div className="flex items-center justify-center gap-4 min-h-[260px] flex-wrap">
+        {/* (1) Encoder output stack — CLS highlighted, arrow pulls it out */}
+        <div className="relative">
           <div className="space-y-1">
             <Cls glow/>
             {Array.from({ length: STACK_N }).map((_, i) => <Bar key={i} hue={i * 50 + 90} w="w-24" dim/>)}
           </div>
-          <div className="font-mono text-[11px] text-rose-300 mt-2">extract [CLS]</div>
-          <div className="font-mono text-[10px] text-slate-500">patches: ignored</div>
+          {/* dashed pull arrow from CLS row out to the right */}
+          <svg className="absolute -right-6 top-0 pointer-events-none" width="28" height="14" style={{ overflow: 'visible' }}>
+            <defs>
+              <marker id="ext-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#f43f5e" />
+              </marker>
+            </defs>
+            <path d="M 0 6 Q 14 6 26 6" stroke="#f43f5e" strokeWidth="1.4" strokeDasharray="3 2" fill="none" markerEnd="url(#ext-arr)"/>
+          </svg>
+          <div className="font-mono text-[11px] text-rose-300 mt-2">encoder out</div>
+          <div className="font-mono text-[10px] text-slate-500">CLS only · patches ignored</div>
         </div>
-        <div className="text-rose-300 font-mono text-2xl">→</div>
+
+        {/* (2) Extracted CLS vector — concrete signed bars, labelled */}
         <div className="text-center">
-          <div className="px-4 py-3 rounded bg-amber-500/15 border border-amber-500/40 font-mono text-[11px] text-amber-200">
-            <div>Linear</div>
-            <div className="text-[9px] text-slate-400 mt-0.5">D → C</div>
+          <div className="text-[10px] font-mono uppercase tracking-wider text-rose-300 mb-1">CLS ∈ ℝ<sup>D</sup></div>
+          <div className="flex flex-col gap-0.5">
+            {CLS_VEC.map((v, i) => {
+              const t = Math.abs(v) / maxAbsCls;
+              const isPos = v >= 0;
+              const w = 6 + t * 50;
+              return (
+                <div key={i} className="flex items-center gap-1 font-mono text-[9px]">
+                  <span className="text-slate-500 w-4 text-right">{i}</span>
+                  <div className="relative w-[64px] h-2.5 bg-slate-900/60 rounded-sm overflow-hidden">
+                    <div className="absolute top-0 bottom-0 left-1/2 w-px bg-slate-700"/>
+                    <div className="absolute top-0 bottom-0 rounded-sm" style={{
+                      [isPos ? 'left' : 'right']: '50%',
+                      width: `${w * 0.5}px`,
+                      background: isPos ? 'rgba(245,158,11,0.85)' : 'rgba(96,165,250,0.85)',
+                    }}/>
+                  </div>
+                  <span className={`tabular-nums w-9 text-right ${isPos ? 'text-amber-300' : 'text-blue-300'}`}>{(v >= 0 ? '+' : '') + v.toFixed(1)}</span>
+                </div>
+              );
+            })}
           </div>
-          <div className="font-mono text-[10px] text-slate-500 mt-1">classifier head</div>
         </div>
-        <div className="text-amber-400 font-mono text-2xl">→</div>
-        <div>
-          <div className="space-y-0.5">
-            {[60, 28, 22, 18, 14, 12, 10, 9].map((w, i) => (
-              <div key={i} className="h-2.5 rounded-sm bg-amber-400/70" style={{ width: `${w}px` }}/>
-            ))}
+
+        {/* (3) Multiply by W (classifier head) */}
+        <div className="text-center flex flex-col items-center">
+          <div className="text-amber-400 font-mono text-xl mb-1">×</div>
+          <div className="px-3 py-2 rounded bg-amber-500/15 border border-amber-500/40 font-mono text-[11px] text-amber-200 leading-tight">
+            <div>W<sub className="text-[9px]">cls</sub></div>
+            <div className="text-[9px] text-slate-400 mt-0.5">D × C</div>
+            <div className="text-[9px] text-slate-400">{CLS_VEC.length} × {LOGITS.length}</div>
           </div>
-          <div className="font-mono text-[11px] text-amber-300 mt-2">logits (C)</div>
-          <div className="font-mono text-[10px] text-slate-500">unnormalized</div>
+          <div className="text-amber-400 font-mono text-xl mt-1">↓</div>
+        </div>
+
+        {/* (4) Logits (C numbers, one per class) — explicit values + class labels */}
+        <div>
+          <div className="text-[10px] font-mono uppercase tracking-wider text-amber-300 mb-1">logits ∈ ℝ<sup>C</sup></div>
+          <div className="space-y-0.5">
+            {LOGITS.map((z, i) => {
+              const t = Math.abs(z) / maxAbsLogit;
+              const isPos = z >= 0;
+              return (
+                <div key={i} className="flex items-center gap-1 font-mono text-[10px]">
+                  <span className="text-slate-300 w-[78px] truncate text-right">{CLASS_LABELS[i]}</span>
+                  <div className="relative w-[80px] h-2.5 bg-slate-900/60 rounded-sm overflow-hidden">
+                    <div className="absolute top-0 bottom-0 left-1/2 w-px bg-slate-700"/>
+                    <div className="absolute top-0 bottom-0 rounded-sm" style={{
+                      [isPos ? 'left' : 'right']: '50%',
+                      width: `${t * 40}px`,
+                      background: isPos ? 'rgba(245,158,11,0.85)' : 'rgba(96,165,250,0.85)',
+                    }}/>
+                  </div>
+                  <span className={`tabular-nums w-9 text-right ${isPos ? 'text-amber-300' : 'text-blue-300'}`}>{(z >= 0 ? '+' : '') + z.toFixed(2)}</span>
+                </div>
+              );
+            })}
+          </div>
+          <div className="text-[10px] font-mono text-slate-500 mt-1.5 italic text-center">unnormalized · still negative possible</div>
         </div>
       </div>
     );
   }
 
-  // ---- Stage 7: Softmax → probabilities
-  const PROBS = [
-    { label: 'tabby cat',     score: 0.74 },
-    { label: 'tiger cat',     score: 0.13 },
-    { label: 'Egyptian cat',  score: 0.06 },
-    { label: 'lynx',          score: 0.04 },
-    { label: 'Persian cat',   score: 0.03 },
-  ];
-  return (
-    <div className="flex flex-col items-center justify-center gap-3 min-h-[260px] py-4">
-      <div className="font-mono text-[11px] text-slate-400">softmax(logits) → class probabilities</div>
-      <div className="space-y-2 w-full max-w-md px-4">
-        {PROBS.map((p, i) => (
-          <div key={i}>
-            <div className="flex justify-between text-[12px] mb-1">
-              <span className="text-slate-200">{p.label}</span>
-              <span className="font-mono text-amber-300">{(p.score * 100).toFixed(0)}%</span>
-            </div>
-            <div className="h-2 bg-slate-800 rounded overflow-hidden">
-              <div className={`h-full ${i === 0 ? 'bg-amber-400' : 'bg-amber-400/40'}`} style={{ width: `${p.score * 100}%` }}/>
-            </div>
+  // ---- Stage 7: Softmax — explicit logits → exp → ÷sum → probabilities.
+  if (step === 6) {
+    const maxAbsLogit = Math.max(...LOGITS.map(Math.abs));
+    return (
+      <div className="flex items-center justify-center gap-4 min-h-[260px] flex-wrap">
+        {/* (1) logits in */}
+        <div>
+          <div className="text-[10px] font-mono uppercase tracking-wider text-amber-300 mb-1">logits z<sub>i</sub></div>
+          <div className="space-y-0.5">
+            {LOGITS.map((z, i) => {
+              const t = Math.abs(z) / maxAbsLogit;
+              const isPos = z >= 0;
+              return (
+                <div key={i} className="flex items-center gap-1 font-mono text-[10px]">
+                  <span className="text-slate-300 w-[72px] truncate text-right">{CLASS_LABELS[i]}</span>
+                  <div className="relative w-[64px] h-2.5 bg-slate-900/60 rounded-sm overflow-hidden">
+                    <div className="absolute top-0 bottom-0 left-1/2 w-px bg-slate-700"/>
+                    <div className="absolute top-0 bottom-0 rounded-sm" style={{
+                      [isPos ? 'left' : 'right']: '50%',
+                      width: `${t * 32}px`,
+                      background: isPos ? 'rgba(245,158,11,0.85)' : 'rgba(96,165,250,0.85)',
+                    }}/>
+                  </div>
+                  <span className={`tabular-nums w-9 text-right ${isPos ? 'text-amber-300' : 'text-blue-300'}`}>{(z >= 0 ? '+' : '') + z.toFixed(2)}</span>
+                </div>
+              );
+            })}
           </div>
-        ))}
+        </div>
+
+        {/* (2) exp() box */}
+        <div className="text-center flex flex-col items-center">
+          <div className="text-amber-400 font-mono text-xl mb-1">→</div>
+          <div className="px-3 py-2 rounded bg-rose-500/15 border border-rose-500/40 font-mono text-[11px] text-rose-200 leading-tight">
+            <div>exp(z<sub>i</sub>)</div>
+            <div className="text-[9px] text-slate-400 mt-0.5">all positive now</div>
+          </div>
+        </div>
+
+        {/* (3) exp values */}
+        <div>
+          <div className="text-[10px] font-mono uppercase tracking-wider text-rose-300 mb-1">exp(z<sub>i</sub>)</div>
+          <div className="space-y-0.5">
+            {expL.map((e, i) => {
+              const w = (e / Math.max(...expL)) * 60;
+              return (
+                <div key={i} className="flex items-center gap-1 font-mono text-[10px]">
+                  <span className="text-slate-500 w-4 text-right">{i}</span>
+                  <div className="w-[64px] h-2.5 bg-slate-900/60 rounded-sm overflow-hidden">
+                    <div className="h-full rounded-sm bg-rose-400/80" style={{ width: `${w}px` }}/>
+                  </div>
+                  <span className="tabular-nums w-10 text-right text-rose-200">{e.toFixed(2)}</span>
+                </div>
+              );
+            })}
+          </div>
+          <div className="text-[10px] font-mono text-slate-500 mt-1 text-center">
+            Σ = <span className="text-amber-300">{Z.toFixed(2)}</span>
+          </div>
+        </div>
+
+        {/* (4) divide-by-sum box */}
+        <div className="text-center flex flex-col items-center">
+          <div className="text-amber-400 font-mono text-xl mb-1">→</div>
+          <div className="px-3 py-2 rounded bg-amber-500/15 border border-amber-500/40 font-mono text-[10px] text-amber-200 leading-tight whitespace-nowrap">
+            <div>÷ Σ exp(z<sub>j</sub>)</div>
+            <div className="text-[9px] text-slate-400 mt-0.5">rows sum to 1</div>
+          </div>
+        </div>
+
+        {/* (5) probabilities — bars + percentages, top class highlighted */}
+        <div className="min-w-[220px]">
+          <div className="text-[10px] font-mono uppercase tracking-wider text-amber-300 mb-1">probabilities</div>
+          <div className="space-y-1">
+            {PROBS_NUM.map((p, i) => (
+              <div key={i}>
+                <div className="flex justify-between text-[11px] font-mono">
+                  <span className={i === 0 ? 'text-amber-100 font-medium' : 'text-slate-300'}>{CLASS_LABELS[i]}</span>
+                  <span className={`tabular-nums ${i === 0 ? 'text-amber-300' : 'text-slate-400'}`}>{(p * 100).toFixed(1)}%</span>
+                </div>
+                <div className="h-1.5 bg-slate-800 rounded overflow-hidden">
+                  <div className={`h-full ${i === 0 ? 'bg-amber-400' : 'bg-amber-400/40'}`} style={{ width: `${p * 100}%` }}/>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="text-[10px] font-mono text-slate-500 mt-1.5 italic">argmax → predicted class</div>
+        </div>
       </div>
-      <div className="font-mono text-[10px] text-slate-500 mt-1">cross-entropy loss vs. one-hot target finishes one training step</div>
-    </div>
-  );
+    );
+  }
+
+  // Fallback (should not be reachable).
+  return null;
 }
 
 function PipelineDetail({ step }) {
@@ -5727,6 +5849,42 @@ function TabNav({ tab, setTab }) {
 export default function App() {
   const [tab, setTab] = useState('live');
 
+  // Accessibility prefs — restored from localStorage so students don't
+  // have to re-pick on every visit.
+  const [fontSize, setFontSize] = useState(() => {
+    try { return localStorage.getItem('a11y_font') || 'default'; } catch { return 'default'; }
+  });
+  const [theme, setTheme] = useState(() => {
+    try { return localStorage.getItem('a11y_theme') || 'dark'; } catch { return 'dark'; }
+  });
+  const [palette, setPalette] = useState(() => {
+    try { return localStorage.getItem('a11y_palette') || 'default'; } catch { return 'default'; }
+  });
+
+  useEffect(() => {
+    const px = { default: '16px', large: '17.5px', xl: '19px' }[fontSize] || '16px';
+    document.documentElement.style.fontSize = px;
+    try { localStorage.setItem('a11y_font', fontSize); } catch {}
+  }, [fontSize]);
+
+  useEffect(() => {
+    try { localStorage.setItem('a11y_theme', theme); } catch {}
+  }, [theme]);
+
+  useEffect(() => {
+    try { localStorage.setItem('a11y_palette', palette); } catch {}
+  }, [palette]);
+
+  // Filter applied to the main content wrapper (NOT the panel) so the
+  // accessibility panel stays in normal colours / un-inverted.
+  const contentFilter = (() => {
+    const parts = [];
+    if (theme === 'light') parts.push('invert(0.92)', 'hue-rotate(180deg)');
+    if (palette === 'highContrast') parts.push('contrast(1.18)', 'saturate(1.4)');
+    if (palette === 'cbSafe') parts.push('saturate(1.45)', 'hue-rotate(-15deg)', 'contrast(1.08)');
+    return parts.length ? parts.join(' ') : 'none';
+  })();
+
   const render = () => {
     switch (tab) {
       case 'live': return <LiveDemoTab />;
@@ -5748,6 +5906,15 @@ export default function App() {
   return (
     <div className="min-h-screen text-slate-200 font-sans relative overflow-x-hidden bg-slate-950"
       style={{ background: '#0a0e1a' }}>
+
+      <A11yPanel
+        fontSize={fontSize} setFontSize={setFontSize}
+        theme={theme} setTheme={setTheme}
+        palette={palette} setPalette={setPalette}
+      />
+
+      {/* Wrap the entire UI so the filter only affects content — panel stays clean. */}
+      <div style={{ filter: contentFilter, transition: 'filter 0.2s' }}>
 
       {/* Header */}
       <header className="relative border-b border-slate-800/60 backdrop-blur-md bg-slate-950/40">
@@ -5830,6 +5997,72 @@ export default function App() {
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { scrollbar-width: none; }
       `}</style>
+      </div> {/* close content-filter wrapper */}
+    </div>
+  );
+}
+
+/* A11yPanel — fixed top-left button that opens an accessibility menu.
+   Three controls: font size, theme (dark/light), color palette
+   (default / high contrast / colorblind-friendly). Choices persist to
+   localStorage so students keep their preferences across sessions. */
+function A11yPanel({ fontSize, setFontSize, theme, setTheme, palette, setPalette }) {
+  const [open, setOpen] = useState(false);
+  const Btn = ({ active, children, onClick, title }) => (
+    <button
+      onClick={onClick}
+      title={title}
+      className={`px-2 py-1 rounded text-[11px] font-mono border transition-all
+        ${active
+          ? 'bg-amber-500/20 border-amber-500/60 text-amber-100'
+          : 'bg-slate-800/40 border-slate-700 text-slate-300 hover:border-slate-500 hover:text-slate-100'}`}
+    >
+      {children}
+    </button>
+  );
+  return (
+    <div className="fixed top-3 left-3 z-50">
+      <button
+        onClick={() => setOpen(o => !o)}
+        aria-label="Accessibility options"
+        title="Accessibility options"
+        className={`px-2.5 py-1.5 rounded-md border font-mono text-[11px] flex items-center gap-1.5 transition-all
+          ${open ? 'bg-amber-500/25 border-amber-500/60 text-amber-100' : 'bg-slate-900/80 border-slate-700 text-slate-200 hover:border-slate-500 backdrop-blur'}`}
+      >
+        <span aria-hidden>♿︎</span>
+        <span>Accessibility</span>
+        <span className="opacity-60">{open ? '▾' : '▸'}</span>
+      </button>
+      {open && (
+        <div className="mt-2 w-64 rounded-lg border border-slate-700 bg-slate-900/95 backdrop-blur shadow-xl shadow-black/40 p-3 space-y-3">
+          <div>
+            <div className="text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1">Font size</div>
+            <div className="grid grid-cols-3 gap-1">
+              <Btn active={fontSize === 'default'} onClick={() => setFontSize('default')}>A</Btn>
+              <Btn active={fontSize === 'large'} onClick={() => setFontSize('large')}>A+</Btn>
+              <Btn active={fontSize === 'xl'} onClick={() => setFontSize('xl')}>A++</Btn>
+            </div>
+          </div>
+          <div>
+            <div className="text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1">Theme</div>
+            <div className="grid grid-cols-2 gap-1">
+              <Btn active={theme === 'dark'} onClick={() => setTheme('dark')} title="Dark (default)">Dark</Btn>
+              <Btn active={theme === 'light'} onClick={() => setTheme('light')} title="Light — inverts the page">Light</Btn>
+            </div>
+          </div>
+          <div>
+            <div className="text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1">Color palette</div>
+            <div className="grid grid-cols-1 gap-1">
+              <Btn active={palette === 'default'} onClick={() => setPalette('default')}>Default</Btn>
+              <Btn active={palette === 'highContrast'} onClick={() => setPalette('highContrast')} title="Boosts saturation + contrast">High contrast</Btn>
+              <Btn active={palette === 'cbSafe'} onClick={() => setPalette('cbSafe')} title="Pushes hues for red-green colour-vision deficiency">Colour-blind safe</Btn>
+            </div>
+          </div>
+          <div className="text-[10px] text-slate-500 leading-snug border-t border-slate-700 pt-2">
+            Preferences saved on this device. Most colour-coded blocks already include text labels alongside the colour.
+          </div>
+        </div>
+      )}
     </div>
   );
 }
