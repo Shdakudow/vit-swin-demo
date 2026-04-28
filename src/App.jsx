@@ -2986,8 +2986,15 @@ function WindowTab() {
   const [winSize, setWinSize] = useState(2);
   const [hoveredWindow, setHoveredWindow] = useState(null);
   const [selectedPatch, setSelectedPatch] = useState(null);
+  // Visual toggles: overlay the cat image as the underlying signal,
+  // and draw actual attention edges from the query so students see
+  // *which connections exist* rather than just stat numbers.
+  const [showImage, setShowImage] = useState(true);
+  const [showVitOverlay, setShowVitOverlay] = useState(false);
+  const [showEdges, setShowEdges] = useState(true);
   const GRID = 8; // 8×8 patches
   const cell = 36;
+  const CAT = import.meta.env.BASE_URL + 'cat.jpg';
 
   const numWindowsSide = GRID / winSize;
   const numWindows = numWindowsSide * numWindowsSide;
@@ -3011,8 +3018,10 @@ function WindowTab() {
     <div className="space-y-8">
       <HowToUseBadge instructions={[
         'Drag the "Window M" slider to repartition the 8×8 grid into M×M non-overlapping windows.',
-        'Click any patch to set it as the query — its windowmates light up. Patches outside its window stay dim.',
-        'The cost panel shows ViT vs windowed-attention compute side-by-side at the chosen M.',
+        'Click any patch — teal lines fan out to its windowmates (the patches Swin attention actually connects).',
+        'Flip the "ViT overlay" toggle to draw rose dashed lines to every other patch — the connections ViT would make and Swin loses.',
+        'Try a corner patch vs a centre patch with M=2: corners reach only 3 neighbours; centres still only 3, but in different positions. The wall is real.',
+        'Use the "Image" toggle to hide the cat and see the windowing in pure form.',
       ]}/>
       <Section icon={Box} kicker="07 — Locality is back" title="Window-based self-attention">
         <p className="max-w-3xl mb-3 text-slate-300">
@@ -3030,11 +3039,27 @@ function WindowTab() {
 
       <div className="grid lg:grid-cols-[auto_1fr] gap-6">
         <Card className="p-5">
-          <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-3">
-            8×8 patch grid · windows of size M
+          <div className="flex items-baseline justify-between mb-3 flex-wrap gap-2">
+            <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400">
+              8×8 patch grid over the cat · windows of size M
+            </div>
+            <div className="flex items-center gap-2 text-[10px] font-mono">
+              <Toggle label="Image" value={showImage} onChange={setShowImage}/>
+              <Toggle label="Edges" value={showEdges} onChange={setShowEdges}/>
+              <Toggle label="ViT overlay" value={showVitOverlay} onChange={setShowVitOverlay}/>
+            </div>
           </div>
           <svg width={GRID * cell} height={GRID * cell} className="rounded-lg bg-slate-950/40 border border-slate-800">
-            {/* patches */}
+            {/* underlying cat image so windows partition something concrete */}
+            {showImage && (
+              <image
+                href={CAT} x={0} y={0}
+                width={GRID * cell} height={GRID * cell}
+                preserveAspectRatio="xMidYMid slice"
+                opacity={0.55}
+              />
+            )}
+            {/* patch overlays — light hue per window, click target */}
             {Array.from({ length: GRID * GRID }).map((_, i) => {
               const px = i % GRID, py = Math.floor(i / GRID);
               const wx = Math.floor(px / winSize), wy = Math.floor(py / winSize);
@@ -3043,7 +3068,9 @@ function WindowTab() {
               const isQuery = selectedPatch === i;
               const isWindowmate = selectedPatch !== null && wIdx === queryWindow && !isQuery;
               const hue = (wIdx * 360 / numWindows) % 360;
-              const fillOpacity = isHover || isWindowmate ? 0.45 : 0.18;
+              const baseAlpha = showImage ? 0.10 : 0.18;
+              const hiAlpha   = showImage ? 0.32 : 0.45;
+              const fillOpacity = isHover || isWindowmate ? hiAlpha : baseAlpha;
               return (
                 <g key={i}>
                   <rect
@@ -3051,7 +3078,7 @@ function WindowTab() {
                     width={cell - 2} height={cell - 2}
                     rx={3}
                     fill={`hsla(${hue}, 60%, 50%, ${fillOpacity})`}
-                    stroke={`hsla(${hue}, 70%, 60%, ${isHover || isWindowmate ? 0.9 : 0.4})`}
+                    stroke={`hsla(${hue}, 70%, 60%, ${isHover || isWindowmate ? 0.95 : 0.35})`}
                     strokeWidth={isHover || isWindowmate ? 1.5 : 0.6}
                     onClick={() => setSelectedPatch(prev => prev === i ? null : i)}
                     onMouseEnter={() => setHoveredWindow(wIdx)}
@@ -3059,7 +3086,9 @@ function WindowTab() {
                     style={{ cursor: 'pointer' }}
                   />
                   <text x={px * cell + cell / 2} y={py * cell + cell / 2 + 4}
-                    textAnchor="middle" fontFamily="monospace" fontSize="10" fill="#cbd5e1"
+                    textAnchor="middle" fontFamily="monospace" fontSize="10"
+                    fill={showImage ? '#fefefe' : '#cbd5e1'}
+                    stroke="rgba(0,0,0,0.6)" strokeWidth={showImage ? 0.4 : 0}
                     style={{ pointerEvents: 'none' }}>
                     {i}
                   </text>
@@ -3096,13 +3125,46 @@ function WindowTab() {
                 );
               })
             )}
+            {/* attention edges from the query patch — what attention actually connects.
+                Rose dashed = what ViT (global) would draw; teal solid = Swin window only. */}
+            {selectedPatch !== null && showEdges && (() => {
+              const qpx = selectedPatch % GRID;
+              const qpy = Math.floor(selectedPatch / GRID);
+              const qcx = qpx * cell + cell / 2;
+              const qcy = qpy * cell + cell / 2;
+              const elements = [];
+              for (let i = 0; i < GRID * GRID; i++) {
+                if (i === selectedPatch) continue;
+                const px = i % GRID, py = Math.floor(i / GRID);
+                const wx = Math.floor(px / winSize), wy = Math.floor(py / winSize);
+                const wIdx = wy * numWindowsSide + wx;
+                const inWindow = wIdx === queryWindow;
+                const cx = px * cell + cell / 2;
+                const cy = py * cell + cell / 2;
+                if (inWindow) {
+                  elements.push(
+                    <line key={`s${i}`} x1={qcx} y1={qcy} x2={cx} y2={cy}
+                      stroke="#2dd4bf" strokeWidth={1.4} opacity={0.85} />
+                  );
+                } else if (showVitOverlay) {
+                  elements.push(
+                    <line key={`v${i}`} x1={qcx} y1={qcy} x2={cx} y2={cy}
+                      stroke="#f43f5e" strokeWidth={0.7} strokeDasharray="2 3" opacity={0.55} />
+                  );
+                }
+              }
+              return elements;
+            })()}
           </svg>
           <div className="mt-4">
             <Slider label="Window size M" value={winSize} options={[1, 2, 4, 8]} onChange={(v) => { setWinSize(v); setSelectedPatch(null); }} />
           </div>
           <div className="mt-3 text-[11px] text-slate-400 italic leading-snug">
-            <span className="text-amber-300">Click a patch</span> to make it the query — its windowmates light up.
-            Hover a window to preview.
+            {selectedPatch == null
+              ? <><span className="text-amber-300">Click any patch</span> on the cat — teal lines will fan out to its windowmates (Swin attention). Flip <span className="text-amber-300">ViT overlay</span> to see what global attention would have drawn.</>
+              : showVitOverlay
+                ? <>The teal lines are <span className="text-teal-300">{peersInWindow}</span> Swin edges; the rose dashed lines are <span className="text-rose-300">{peersInViT - peersInWindow}</span> extra edges ViT would have drawn — every one is a pair of patches Swin <em>cannot</em> directly connect.</>
+                : <>Teal lines = the <span className="text-teal-300">{peersInWindow}</span> windowmates this query attends to. Toggle <span className="text-amber-300">ViT overlay</span> to compare against global attention.</>}
           </div>
         </Card>
 
