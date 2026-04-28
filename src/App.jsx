@@ -6005,25 +6005,50 @@ export default function App() {
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { scrollbar-width: none; }
 
-        /* When the user picks a larger font size in the A11y panel, also
-           scale up the small absolute-pixel utilities (text-[8px] …
-           text-[14px]) that Tailwind generates as fixed sizes. The root
-           font-size change covers rem-based sizes only. */
-        html[data-fontsize="large"]  .text-\\[8px\\]  { font-size: 9.5px  !important; }
-        html[data-fontsize="large"]  .text-\\[9px\\]  { font-size: 10.5px !important; }
-        html[data-fontsize="large"]  .text-\\[10px\\] { font-size: 11.5px !important; }
-        html[data-fontsize="large"]  .text-\\[11px\\] { font-size: 12.5px !important; }
-        html[data-fontsize="large"]  .text-\\[12px\\] { font-size: 13.5px !important; }
-        html[data-fontsize="large"]  .text-\\[13px\\] { font-size: 14.5px !important; }
-        html[data-fontsize="large"]  .text-\\[14px\\] { font-size: 15.5px !important; }
+        /* Font-size scaling for the A11y panel.  The root font-size
+           change covers rem-based utilities (text-xs, text-sm, …) but
+           Tailwind also generates absolute-pixel classes (text-[10px]
+           …) that ignore that — we explicitly bump those plus boost
+           the small named sizes so captions get noticeably larger. */
+        html[data-fontsize="large"] .text-xs   { font-size: 0.85rem !important; line-height: 1.25rem !important; }
+        html[data-fontsize="large"] .text-sm   { font-size: 0.95rem !important; line-height: 1.4rem !important; }
+        html[data-fontsize="large"] .text-base { font-size: 1.05rem !important; }
 
-        html[data-fontsize="xl"]  .text-\\[8px\\]  { font-size: 11px !important; }
-        html[data-fontsize="xl"]  .text-\\[9px\\]  { font-size: 12px !important; }
-        html[data-fontsize="xl"]  .text-\\[10px\\] { font-size: 13px !important; }
-        html[data-fontsize="xl"]  .text-\\[11px\\] { font-size: 14px !important; }
-        html[data-fontsize="xl"]  .text-\\[12px\\] { font-size: 15px !important; }
-        html[data-fontsize="xl"]  .text-\\[13px\\] { font-size: 16px !important; }
-        html[data-fontsize="xl"]  .text-\\[14px\\] { font-size: 17px !important; }
+        html[data-fontsize="large"] .text-\\[8px\\]   { font-size: 10px  !important; }
+        html[data-fontsize="large"] .text-\\[9px\\]   { font-size: 11px  !important; }
+        html[data-fontsize="large"] .text-\\[10px\\]  { font-size: 12px  !important; }
+        html[data-fontsize="large"] .text-\\[11px\\]  { font-size: 13px  !important; }
+        html[data-fontsize="large"] .text-\\[12px\\]  { font-size: 14px  !important; }
+        html[data-fontsize="large"] .text-\\[13px\\]  { font-size: 15px  !important; }
+        html[data-fontsize="large"] .text-\\[14px\\]  { font-size: 16px  !important; }
+
+        /* Catch any other inline pixel font-size on small descriptive text.
+           We only target sizes ≤ 14px to avoid blowing up large headings. */
+        html[data-fontsize="large"] [style*="font-size: 9px"],
+        html[data-fontsize="large"] [style*="font-size:9px"]   { font-size: 11px  !important; }
+        html[data-fontsize="large"] [style*="font-size: 10px"],
+        html[data-fontsize="large"] [style*="font-size:10px"]  { font-size: 12px  !important; }
+        html[data-fontsize="large"] [style*="font-size: 11px"],
+        html[data-fontsize="large"] [style*="font-size:11px"]  { font-size: 13px  !important; }
+
+        html[data-fontsize="xl"] .text-xs   { font-size: 0.95rem !important; line-height: 1.35rem !important; }
+        html[data-fontsize="xl"] .text-sm   { font-size: 1.05rem !important; line-height: 1.5rem !important; }
+        html[data-fontsize="xl"] .text-base { font-size: 1.15rem !important; }
+
+        html[data-fontsize="xl"] .text-\\[8px\\]   { font-size: 12px !important; }
+        html[data-fontsize="xl"] .text-\\[9px\\]   { font-size: 13px !important; }
+        html[data-fontsize="xl"] .text-\\[10px\\]  { font-size: 14px !important; }
+        html[data-fontsize="xl"] .text-\\[11px\\]  { font-size: 15px !important; }
+        html[data-fontsize="xl"] .text-\\[12px\\]  { font-size: 16px !important; }
+        html[data-fontsize="xl"] .text-\\[13px\\]  { font-size: 17px !important; }
+        html[data-fontsize="xl"] .text-\\[14px\\]  { font-size: 18px !important; }
+
+        html[data-fontsize="xl"] [style*="font-size: 9px"],
+        html[data-fontsize="xl"] [style*="font-size:9px"]   { font-size: 13px !important; }
+        html[data-fontsize="xl"] [style*="font-size: 10px"],
+        html[data-fontsize="xl"] [style*="font-size:10px"]  { font-size: 14px !important; }
+        html[data-fontsize="xl"] [style*="font-size: 11px"],
+        html[data-fontsize="xl"] [style*="font-size:11px"]  { font-size: 15px !important; }
       `}</style>
       </div> {/* close content-filter wrapper */}
     </div>
@@ -6064,12 +6089,14 @@ function A11yPanel({ fontSize, setFontSize, theme, setTheme, palette, setPalette
         onClick={() => setOpen(o => !o)}
         aria-label="Display options"
         title="Display options — font, theme, palette"
-        className={`px-2.5 py-1.5 rounded-md border font-mono text-[11px] flex items-center gap-1.5 transition-all
-          ${open ? 'bg-amber-500/25 border-amber-500/60 text-amber-100' : 'bg-slate-900/80 border-slate-700 text-slate-200 hover:border-slate-500 backdrop-blur'}`}
+        className={`px-4 py-2.5 rounded-lg border-2 font-medium text-sm flex items-center gap-2 transition-all shadow-lg
+          ${open
+            ? 'bg-amber-500/25 border-amber-500/70 text-amber-100 shadow-amber-500/20'
+            : 'bg-slate-900/90 border-slate-600 text-slate-100 hover:border-amber-500/60 hover:text-amber-100 backdrop-blur shadow-black/40'}`}
       >
-        <span aria-hidden>⚙</span>
+        <span aria-hidden className="text-base leading-none">⚙</span>
         <span>Display</span>
-        <span className="opacity-60">{open ? '▾' : '▸'}</span>
+        <span className="opacity-70 text-xs">{open ? '▾' : '▸'}</span>
       </button>
       {open && (
         <div className="mt-2 w-72 rounded-lg border border-slate-700 bg-slate-900/95 backdrop-blur shadow-xl shadow-black/40 p-3 space-y-3 max-h-[80vh] overflow-y-auto">
@@ -6085,7 +6112,7 @@ function A11yPanel({ fontSize, setFontSize, theme, setTheme, palette, setPalette
             <div className="text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1">Theme</div>
             <div className="grid grid-cols-2 gap-1">
               <Btn active={theme === 'dark'} onClick={() => setTheme('dark')} title="Dark (default)">Dark</Btn>
-              <Btn active={theme === 'light'} onClick={() => setTheme('light')} title="Light — page is inverted; text contrast is preserved">Light</Btn>
+              <Btn active={theme === 'light'} onClick={() => setTheme('light')} title="👻 a playful inverted view — not a true light theme, contrast is preserved by uniform inversion">👻 Ghost</Btn>
             </div>
           </div>
           <div>
