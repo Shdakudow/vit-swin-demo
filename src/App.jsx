@@ -1756,10 +1756,15 @@ function AttentionTab() {
         </div>
       </Section>
 
-      {/* How to use — single tight line so it doesn't take a whole row. */}
-      <Card className="p-2 bg-amber-500/[0.04] border-amber-500/30">
+      {/* How to use — single tight line so it doesn't take a whole row.
+          Small bouncing arrow draws the eye to the instructions, the
+          shimmer-cta wash gives it a soft alive feel. */}
+      <Card className="p-2 bg-amber-500/[0.04] border-amber-500/30 shimmer-cta">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-slate-200">
-          <span className="text-[10px] font-mono tracking-[0.2em] text-amber-400/80 uppercase">How to use</span>
+          <span className="flex items-center gap-1.5 text-[10px] font-mono tracking-[0.2em] text-amber-400/80 uppercase">
+            <span className="anim-bounce" aria-hidden>👇</span>
+            How to use
+          </span>
           <span><span className="font-mono text-amber-300">1.</span> Click any patch on the image (sets the <em>query</em>).</span>
           <span><span className="font-mono text-amber-300">2.</span> Step <strong>1 → 5</strong> below to walk the math.</span>
           <span><span className="font-mono text-amber-300">3.</span> The image has three matched pairs — red squares, blue circles, yellow triangles — the model should find the twin of each.</span>
@@ -1789,7 +1794,9 @@ function AttentionTab() {
             <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-2">
               {selectedPatch !== null
                 ? <>Query: patch <span className="text-amber-300">#{selectedPatch}</span></>
-                : <span className="text-amber-300 animate-pulse">↓ Click a patch below to start ↓</span>}
+                : <span className="text-amber-300 anim-soft-pulse inline-flex items-center gap-1">
+                    <span className="anim-bounce">👇</span> Click a patch below to start <span className="anim-bounce">👇</span>
+                  </span>}
             </div>
             <div
               className={`relative w-[240px] h-[240px] rounded-lg overflow-hidden cursor-crosshair transition-all
@@ -5268,14 +5275,16 @@ function LiveDemoTab() {
           <div className="flex gap-2">
             <button
               onClick={() => { if (progress >= 1) setProgress(0); setPlaying(p => !p); }}
-              className="px-3 py-1.5 rounded-md bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-200 flex items-center gap-1.5 text-sm font-medium transition-all"
+              data-active={playing ? 'true' : 'false'}
+              className={`px-3 py-1.5 rounded-md bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-200 flex items-center gap-1.5 text-sm font-medium transition-all shimmer-cta lift-on-hover
+                ${playing ? '' : 'anim-glow-amber'}`}
             >
               {playing ? <Pause size={13}/> : <Play size={13}/>}
               {playing ? 'Pause' : (progress >= 1 ? 'Replay' : 'Play')}
             </button>
             <button
               onClick={reset}
-              className="px-2.5 py-1.5 rounded-md bg-slate-800/60 hover:bg-slate-800 border border-slate-700 text-slate-300 transition-all"
+              className="px-2.5 py-1.5 rounded-md bg-slate-800/60 hover:bg-slate-800 border border-slate-700 text-slate-300 transition-all lift-on-hover"
               title="Reset"
             >
               <RotateCcw size={13}/>
@@ -6023,7 +6032,7 @@ export default function App() {
                     <button
                       key={t.id}
                       onClick={() => setTab(t.id)}
-                      className={`px-3 py-2 rounded-lg flex items-center gap-2 text-sm transition-all
+                      className={`px-3 py-2 rounded-lg flex items-center gap-2 text-sm transition-all lift-on-hover
                         ${active
                           ? 'bg-amber-500/15 text-amber-200 border border-amber-500/40'
                           : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 border border-transparent'}`}
@@ -6065,6 +6074,60 @@ export default function App() {
         * { -webkit-tap-highlight-color: transparent; }
         button, canvas, [role="button"] { touch-action: manipulation; }
         canvas { -webkit-touch-callout: none; user-select: none; }
+
+        /* ---- Friendly micro-animations.  All under 2 s and gentle —
+           the goal is to draw the eye to the next thing to click,
+           not to be distracting. Respect prefers-reduced-motion. */
+        @keyframes glow-amber {
+          0%, 100% { box-shadow: 0 0 0   rgba(245, 158, 11, 0.0),
+                                 0 0 0   rgba(245, 158, 11, 0.0); }
+          50%      { box-shadow: 0 0 14px rgba(245, 158, 11, 0.45),
+                                 0 0 28px rgba(245, 158, 11, 0.18); }
+        }
+        @keyframes soft-pulse {
+          0%, 100% { transform: scale(1);    opacity: 1;   }
+          50%      { transform: scale(1.04); opacity: 0.92; }
+        }
+        @keyframes attention-bounce {
+          0%, 100% { transform: translateY(0); }
+          50%      { transform: translateY(-3px); }
+        }
+        @keyframes shimmer-sweep {
+          0%   { background-position: -180% 0; }
+          100% { background-position:  280% 0; }
+        }
+
+        .anim-glow-amber  { animation: glow-amber 2.4s ease-in-out infinite; }
+        .anim-soft-pulse  { animation: soft-pulse 2.0s ease-in-out infinite; }
+        .anim-bounce      { animation: attention-bounce 1.6s ease-in-out infinite; display: inline-block; }
+
+        /* Shimmer overlay on the primary Play CTA — a faint diagonal
+           gradient that sweeps right every few seconds.  Pause when
+           the button is in 'playing' state (we use data-active=true). */
+        .shimmer-cta {
+          position: relative;
+          overflow: hidden;
+        }
+        .shimmer-cta::after {
+          content: "";
+          position: absolute; inset: 0;
+          background: linear-gradient(110deg,
+            transparent 30%, rgba(255,255,255,0.18) 50%, transparent 70%);
+          background-size: 200% 100%;
+          animation: shimmer-sweep 3.4s linear infinite;
+          pointer-events: none;
+        }
+        .shimmer-cta[data-active="true"]::after { animation: none; opacity: 0; }
+
+        /* Subtle hover lift for tab nav and card-style buttons. */
+        .lift-on-hover { transition: transform 0.18s ease, box-shadow 0.18s ease; }
+        .lift-on-hover:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,0,0,0.35); }
+
+        @media (prefers-reduced-motion: reduce) {
+          .anim-glow-amber, .anim-soft-pulse, .anim-bounce,
+          .shimmer-cta::after { animation: none !important; }
+          .lift-on-hover:hover { transform: none; }
+        }
 
         /* Font-size scaling for the A11y panel.  The root font-size
            change covers rem-based utilities (text-xs, text-sm, …) but
