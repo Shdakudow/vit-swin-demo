@@ -475,7 +475,7 @@ const Toggle = ({ label, value, onChange }) => (
    ========================================================= */
 
 function OverviewCostDemo() {
-  const [side, setSide] = useState(384);
+  const [side, setSide] = useState(768);
   const P = 16, M = 7;
   const N = Math.round((side / P) ** 2);
   const vitCost = N * N;
@@ -4517,7 +4517,7 @@ function ClassContribution({ image, attentionRows, gridN, preds, status, statusM
    t=0 the bills are zero, at t=1 they hit the per-image total. Slider
    for image side controls the ceiling. */
 function FlopsCostCard({ progress = 1 }) {
-  const [side, setSide] = useState(384);
+  const [side, setSide] = useState(768);
   const P = 16, M = 7, L = 12, D = 768;
   const N = Math.round((side / P) ** 2);
   // Attention FLOPs per image (Q,K,V,O projections + scaled-dot product). Approximate.
