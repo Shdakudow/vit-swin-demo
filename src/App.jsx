@@ -201,40 +201,62 @@ function drawTestImage(ctx, size, variant = 0) {
    attend strongly to the OTHER red square, and similarly for the
    blue circles. Designed to align with patchSize=48 / SIZE=240. */
 function drawPairsDemoImage(ctx, size) {
+  // Slightly lighter background so coloured shapes pop more.
   const bg = ctx.createLinearGradient(0, 0, 0, size);
-  bg.addColorStop(0, '#1e293b');
-  bg.addColorStop(1, '#0f172a');
+  bg.addColorStop(0, '#0c1424');
+  bg.addColorStop(1, '#050810');
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, size, size);
 
-  const cx1 = size * 0.22, cy1 = size * 0.22;
-  const cx2 = size * 0.78, cy2 = size * 0.22;
-  const cx3 = size * 0.22, cy3 = size * 0.78;
-  const cx4 = size * 0.78, cy4 = size * 0.78;
-  const r = size * 0.11;
+  // Three pairs of distinct shape+colour combos, scattered around the
+  // image so any patch a student clicks can find a "twin" elsewhere.
+  // Bigger, more saturated colours than before so the patch grid shows
+  // clearly different tints from cell to cell.
+  const r = size * 0.13;
+  const tri = (cx, cy, rr, color) => {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - rr);
+    ctx.lineTo(cx + rr, cy + rr * 0.85);
+    ctx.lineTo(cx - rr, cy + rr * 0.85);
+    ctx.closePath();
+    ctx.fill();
+  };
+  const square = (cx, cy, rr, color) => {
+    ctx.fillStyle = color;
+    ctx.fillRect(cx - rr, cy - rr, rr * 2, rr * 2);
+  };
+  const circle = (cx, cy, rr, color) => {
+    ctx.fillStyle = color;
+    ctx.beginPath(); ctx.arc(cx, cy, rr, 0, Math.PI * 2); ctx.fill();
+  };
 
-  // Pair A — red squares (top-left & bottom-right, diagonal twins)
-  ctx.fillStyle = '#ef4444';
-  ctx.fillRect(cx1 - r, cy1 - r, r * 2, r * 2);
-  ctx.fillRect(cx4 - r, cy4 - r, r * 2, r * 2);
+  // Pair A — bright red squares (NW + SE)
+  square(size * 0.18, size * 0.20, r, '#ff3b3b');
+  square(size * 0.82, size * 0.80, r, '#ff3b3b');
 
-  // Pair B — blue circles (top-right & bottom-left, diagonal twins)
-  ctx.fillStyle = '#3b82f6';
-  ctx.beginPath(); ctx.arc(cx2, cy2, r, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(cx3, cy3, r, 0, Math.PI * 2); ctx.fill();
+  // Pair B — saturated blue circles (NE + SW)
+  circle(size * 0.82, size * 0.20, r, '#2f7bff');
+  circle(size * 0.18, size * 0.80, r, '#2f7bff');
 
-  // small reference dot in the center to break symmetry visually
-  ctx.fillStyle = '#fbbf24';
+  // Pair C — yellow triangles (top-centre + bottom-centre) so the centre
+  // column of patches has its own twin set.
+  tri(size * 0.50, size * 0.18, r * 0.95, '#ffd23a');
+  tri(size * 0.50, size * 0.82, r * 0.95, '#ffd23a');
+
+  // tiny dark dot to anchor the very centre — breaks pure symmetry.
+  ctx.fillStyle = '#94a3b8';
   ctx.beginPath();
-  ctx.arc(size * 0.5, size * 0.5, size * 0.025, 0, Math.PI * 2);
+  ctx.arc(size * 0.5, size * 0.5, size * 0.02, 0, Math.PI * 2);
   ctx.fill();
 
-  // very subtle noise
+  // light grain so each patch has a unique pixel signature even within
+  // a single colour region (helps the attention math distinguish them).
   const img = ctx.getImageData(0, 0, size, size);
   const rng = mulberry32(11);
   for (let i = 0; i < img.data.length; i += 4) {
-    const n = (rng() - 0.5) * 6;
-    img.data[i] = Math.max(0, Math.min(255, img.data[i] + n));
+    const n = (rng() - 0.5) * 10;
+    img.data[i]     = Math.max(0, Math.min(255, img.data[i]     + n));
     img.data[i + 1] = Math.max(0, Math.min(255, img.data[i + 1] + n));
     img.data[i + 2] = Math.max(0, Math.min(255, img.data[i + 2] + n));
   }
@@ -1323,7 +1345,7 @@ function PositionSimExplorer({ data, N }) {
    ========================================================= */
 
 function AttentionTab() {
-  const [patchSize, setPatchSize] = useState(48);
+  const [patchSize, setPatchSize] = useState(60);
   const [selectedPatch, setSelectedPatch] = useState(null);
   const [seed, setSeed] = useState(7);
   const [step, setStep] = useState(0);
@@ -1565,7 +1587,7 @@ function AttentionTab() {
               <Slider
                 label="Patch size (px)"
                 value={patchSize}
-                options={[30, 48, 60]}
+                options={[54, 60, 66, 80]}
                 onChange={(v) => { setPatchSize(v); setSelectedPatch(null); }}
               />
               <Slider label="Random seed (W_Q, W_K, W_V)" value={seed} min={1} max={50} onChange={setSeed} />
