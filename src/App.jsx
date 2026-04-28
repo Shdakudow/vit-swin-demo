@@ -968,44 +968,196 @@ function PatchThumb({ index, patchSize, grid, highlighted, onHover }) {
    TAB 3 — Position Embedding
    ========================================================= */
 
-function PositionTab() {
-  const [posOn, setPosOn] = useState(true);
-  const [shuffle, setShuffle] = useState(false);
-  const embDim = 64;
-  const N = 16;
+const POS_METHODS = [
+  { id: 'learned',  name: 'Learned (untrained)',     kind: 'classic' },
+  { id: 'learnedT', name: 'Learned (post-training)', kind: 'classic' },
+  { id: 'sin1d',    name: '1D Sinusoidal',           kind: 'classic' },
+  { id: 'sin2d',    name: '2D Sinusoidal (axial)',   kind: 'classic' },
+  { id: 'rope',     name: 'RoPE · 2D Rotary',        kind: 'modern'  },
+  { id: 'alibi',    name: 'ALiBi · linear bias',     kind: 'modern'  },
+  { id: 'relbias',  name: 'Swin Relative Bias',      kind: 'modern'  },
+];
 
-  // Learnable position embeddings approximated by a 2D sinusoidal pattern
-  const posMatrix = useMemo(() => {
-    const grid = Math.sqrt(N);
-    const data = new Float32Array(N * embDim);
-    for (let i = 0; i < N; i++) {
-      const py = Math.floor(i / grid), px = i % grid;
-      for (let d = 0; d < embDim; d++) {
-        const freq = Math.pow(10000, -2 * Math.floor(d / 4) / embDim);
-        if (d % 4 === 0) data[i * embDim + d] = Math.sin(px * freq);
-        else if (d % 4 === 1) data[i * embDim + d] = Math.cos(px * freq);
-        else if (d % 4 === 2) data[i * embDim + d] = Math.sin(py * freq);
-        else data[i * embDim + d] = Math.cos(py * freq);
-      }
-    }
-    return data;
-  }, []);
+const POS_METHOD_INFO = {
+  learned: (
+    <>
+      <strong className="text-amber-200">Learned (untrained).</strong> ViT's actual choice — but at <em>init</em>.
+      A free <Eq>{String.raw`E_{\text{pos}}\in\mathbb{R}^{N\times D}`}</Eq> with random Gaussian rows.
+      No spatial structure baked in — only the diagonal lights up because each position is similar to itself.
+      Spatial relations have to be <em>learned</em> from the data.
+    </>
+  ),
+  learnedT: (
+    <>
+      <strong className="text-amber-200">Learned (post-training).</strong> What ViT-Base's position embeddings
+      actually look like after ImageNet training (Dosovitskiy et al., 2021, Fig. 7). The model discovers
+      a smooth 2D structure on its own — nearby positions develop similar embeddings. We approximate it
+      as <Eq>{String.raw`\exp(-\|p_i - p_j\|^2 / 2\sigma^2)`}</Eq>.
+    </>
+  ),
+  sin1d: (
+    <>
+      <strong className="text-amber-200">1D Sinusoidal</strong> · the original "Attention Is All You Need" recipe.
+      Patches are flattened to row-major index <Eq>i</Eq>; alternating dims use
+      <Eq>{String.raw`\sin(i\cdot\omega_k)`}</Eq>, <Eq>{String.raw`\cos(i\cdot\omega_k)`}</Eq>.
+      Cheap, no params — but the 2D image structure is collapsed to a single dimension.
+    </>
+  ),
+  sin2d: (
+    <>
+      <strong className="text-amber-200">2D Sinusoidal (axial)</strong> · the natural vision adaptation.
+      Half the dims encode <Eq>{String.raw`p_x`}</Eq>, the other half encode <Eq>{String.raw`p_y`}</Eq> with
+      sin/cos at log-spaced frequencies. Used in DETR, Stable-Diffusion's UNet, and many ViT variants.
+      Notice the cross-shaped bright row + column around the clicked patch.
+    </>
+  ),
+  rope: (
+    <>
+      <strong className="text-teal-200">RoPE · Rotary Position Embeddings</strong> (Su et al., 2021)
+      · the default in modern LLMs (LLaMA, Qwen, GPT-NeoX). Instead of <em>adding</em> a vector,
+      RoPE <em>rotates</em> Q and K dim-pairs by an angle proportional to position.
+      Q·K then depends only on the <em>relative</em> offset:
+      <Eq>{String.raw`q_i^\top k_j = f(i-j)`}</Eq>. We extend it to 2D by splitting dims between rows / cols.
+    </>
+  ),
+  alibi: (
+    <>
+      <strong className="text-teal-200">ALiBi · Attention with Linear Biases</strong> (Press et al., 2022)
+      · used in MPT, BLOOM. No position embeddings at all — instead, a <em>linear distance penalty</em>
+      <Eq>{String.raw`-m \cdot |i - j|`}</Eq> is added directly to attention logits.
+      Strong locality bias and trivially extrapolates to longer sequences. We use 2D Manhattan distance for vision.
+    </>
+  ),
+  relbias: (
+    <>
+      <strong className="text-teal-200">Swin Relative Position Bias</strong> (Liu et al., 2021)
+      · a learnable scalar <Eq>{String.raw`B_{\Delta x, \Delta y}`}</Eq> per relative offset, added to attention
+      logits inside each window. Doesn't add a vector to tokens — just biases attention by relative position.
+      We approximate "what gets learned" as a smooth 2D Gaussian falloff.
+    </>
+  ),
+};
 
-  // Cosine similarity between position embeddings — illustrates spatial nearness
-  const simMatrix = useMemo(() => {
-    const sim = new Float32Array(N * N);
+/* computePositionSim — produces an N×N spatial-similarity matrix for the
+   chosen positional-encoding method. Methods that add a vector to tokens
+   (learned, sinusoidal) build a posMatrix and take cosine similarity.
+   Methods that only modify attention (RoPE, ALiBi, Swin relative bias)
+   compute the implied similarity between positions directly. */
+function computePositionSim(method, N) {
+  const grid = Math.round(Math.sqrt(N));
+  const D = 64;
+  const sim = new Float32Array(N * N);
+
+  const posSimFromMatrix = (pos) => {
     for (let i = 0; i < N; i++) {
       for (let j = 0; j < N; j++) {
         let dot = 0, na = 0, nb = 0;
-        for (let d = 0; d < embDim; d++) {
-          const a = posMatrix[i * embDim + d], b = posMatrix[j * embDim + d];
+        for (let d = 0; d < D; d++) {
+          const a = pos[i * D + d], b = pos[j * D + d];
           dot += a * b; na += a * a; nb += b * b;
         }
         sim[i * N + j] = dot / (Math.sqrt(na * nb) + 1e-8);
       }
     }
-    return sim;
-  }, [posMatrix]);
+  };
+
+  if (method === 'learned') {
+    const rng = mulberry32(7);
+    const pos = new Float32Array(N * D);
+    for (let k = 0; k < pos.length; k++) pos[k] = rng() * 2 - 1;
+    posSimFromMatrix(pos);
+  } else if (method === 'learnedT') {
+    for (let i = 0; i < N; i++) {
+      const ix = i % grid, iy = (i / grid) | 0;
+      for (let j = 0; j < N; j++) {
+        const jx = j % grid, jy = (j / grid) | 0;
+        const dx = ix - jx, dy = iy - jy;
+        sim[i * N + j] = Math.exp(-(dx * dx + dy * dy) / (2 * 0.9 * 0.9));
+      }
+    }
+  } else if (method === 'sin1d') {
+    const pos = new Float32Array(N * D);
+    for (let i = 0; i < N; i++) {
+      for (let d = 0; d < D; d++) {
+        const k = Math.floor(d / 2);
+        const omega = Math.pow(10000, -2 * k / D);
+        pos[i * D + d] = (d % 2 === 0) ? Math.sin(i * omega) : Math.cos(i * omega);
+      }
+    }
+    posSimFromMatrix(pos);
+  } else if (method === 'sin2d') {
+    const pos = new Float32Array(N * D);
+    for (let i = 0; i < N; i++) {
+      const py = (i / grid) | 0, px = i % grid;
+      for (let d = 0; d < D; d++) {
+        const k = Math.floor(d / 4);
+        const omega = Math.pow(10000, -2 * k / D);
+        if (d % 4 === 0) pos[i * D + d] = Math.sin(px * omega);
+        else if (d % 4 === 1) pos[i * D + d] = Math.cos(px * omega);
+        else if (d % 4 === 2) pos[i * D + d] = Math.sin(py * omega);
+        else pos[i * D + d] = Math.cos(py * omega);
+      }
+    }
+    posSimFromMatrix(pos);
+  } else if (method === 'rope') {
+    // 2D RoPE: split dims half for row, half for column. Q·K reduces to a
+    // sum of cos((Δp)·ω_k) terms — that's exactly what we plot.
+    const halfPairs = (D / 4) | 0; // pairs allocated per axis
+    for (let i = 0; i < N; i++) {
+      const ix = i % grid, iy = (i / grid) | 0;
+      for (let j = 0; j < N; j++) {
+        const jx = j % grid, jy = (j / grid) | 0;
+        const dx = ix - jx, dy = iy - jy;
+        let s = 0;
+        for (let k = 0; k < halfPairs; k++) {
+          const omega = Math.pow(10000, -2 * k / (D / 2));
+          s += Math.cos(dx * omega);
+          s += Math.cos(dy * omega);
+        }
+        sim[i * N + j] = s / (2 * halfPairs);
+      }
+    }
+  } else if (method === 'alibi') {
+    // Attention bias = -m · |Δ|. Convert to "similarity" via exp(bias) so
+    // it overlays on the same 0..1 colourmap as the others.
+    const m = 0.6;
+    for (let i = 0; i < N; i++) {
+      const ix = i % grid, iy = (i / grid) | 0;
+      for (let j = 0; j < N; j++) {
+        const jx = j % grid, jy = (j / grid) | 0;
+        const d = Math.abs(ix - jx) + Math.abs(iy - jy);
+        sim[i * N + j] = Math.exp(-m * d);
+      }
+    }
+  } else if (method === 'relbias') {
+    // Swin's bias is a *learned* table indexed by relative (Δx, Δy). We
+    // approximate "what gets learned" with a smooth, mildly anisotropic
+    // Gaussian — the actual learned bias has been observed to look like
+    // this in published heatmaps.
+    for (let i = 0; i < N; i++) {
+      const ix = i % grid, iy = (i / grid) | 0;
+      for (let j = 0; j < N; j++) {
+        const jx = j % grid, jy = (j / grid) | 0;
+        const dx = ix - jx, dy = iy - jy;
+        const r2 = dx * dx + dy * dy;
+        sim[i * N + j] = Math.exp(-r2 / (2 * 1.1 * 1.1));
+      }
+    }
+  } else {
+    // Fallback: identity
+    for (let i = 0; i < N; i++) sim[i * N + i] = 1;
+  }
+
+  return sim;
+}
+
+function PositionTab() {
+  const [posOn, setPosOn] = useState(true);
+  const [shuffle, setShuffle] = useState(false);
+  const [posMethod, setPosMethod] = useState('sin2d');
+  const N = 16;
+
+  const simMatrix = useMemo(() => computePositionSim(posMethod, N), [posMethod, N]);
 
   const order = useMemo(() => {
     const arr = Array.from({ length: N }, (_, i) => i);
@@ -1083,15 +1235,51 @@ function PositionTab() {
           </Card>
 
           <Card className="p-5">
-            <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/80 mb-3">
-              Click a position · see who its embedding is similar to
+            <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/80 mb-2">
+              Pick an encoding · click a patch · see its spatial similarity
             </div>
-            <PositionSimExplorer data={simMatrix} N={N} />
-            <div className="mt-3 text-[12px] text-slate-400 leading-relaxed">
-              The big grid is the actual 4×4 arrangement of patches. Click any patch — its
-              position-embedding similarity to every other patch lights up on the same grid.
-              <strong> Spatially-nearby patches have visibly brighter cells</strong>; far-away
-              patches are dim. That's the spatial structure attention learns to use.
+
+            <div className="text-[10px] font-mono uppercase tracking-wider text-slate-500 mb-1.5">Classic</div>
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {POS_METHODS.filter(m => m.kind === 'classic').map(m => (
+                <button
+                  key={m.id}
+                  onClick={() => setPosMethod(m.id)}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-mono border transition-all
+                    ${posMethod === m.id
+                      ? 'bg-amber-500/20 border-amber-500/60 text-amber-100'
+                      : 'bg-slate-800/40 border-slate-700 text-slate-400 hover:border-slate-600 hover:text-slate-200'}`}
+                >
+                  {m.name}
+                </button>
+              ))}
+            </div>
+
+            <div className="text-[10px] font-mono uppercase tracking-wider text-slate-500 mb-1.5">Modern · used in recent LLMs / vision models</div>
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {POS_METHODS.filter(m => m.kind === 'modern').map(m => (
+                <button
+                  key={m.id}
+                  onClick={() => setPosMethod(m.id)}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-mono border transition-all
+                    ${posMethod === m.id
+                      ? 'bg-teal-500/20 border-teal-500/60 text-teal-100'
+                      : 'bg-slate-800/40 border-slate-700 text-slate-400 hover:border-slate-600 hover:text-slate-200'}`}
+                >
+                  <span className="opacity-60 mr-1">★</span>{m.name}
+                </button>
+              ))}
+            </div>
+
+            <PositionSimExplorer data={simMatrix} N={N} key={posMethod} />
+
+            <div className="mt-3 text-[12px] text-slate-300 leading-relaxed border-l-2 border-amber-500/40 pl-3">
+              {POS_METHOD_INFO[posMethod]}
+            </div>
+            <div className="mt-2 text-[11px] text-slate-500 italic leading-relaxed">
+              Click any patch in the 4×4 grid. The other cells light up by the chosen method's
+              implicit similarity between two positions — bright = "the model treats these as nearby",
+              dim = "treated as far apart".
             </div>
           </Card>
         </div>
@@ -2812,8 +3000,8 @@ function WindowTab() {
 
 function ShiftedTab() {
   const [layer, setLayer] = useState(0); // 0 = W-MSA, 1 = SW-MSA
-  const [auto, setAuto] = useState(false);
-  const [showCyclic, setShowCyclic] = useState(false);
+  const [auto, setAuto] = useState(true);
+  const [showCyclic, setShowCyclic] = useState(true);
   const [selectedPatch, setSelectedPatch] = useState(null);
   const GRID = 8;
   const M = 4; // window size
@@ -2822,7 +3010,7 @@ function ShiftedTab() {
 
   useEffect(() => {
     if (!auto) return;
-    const t = setInterval(() => setLayer(l => 1 - l), 1500);
+    const t = setInterval(() => setLayer(l => 1 - l), 3000);
     return () => clearInterval(t);
   }, [auto]);
 
@@ -3117,59 +3305,63 @@ function HierarchyTab() {
         </p>
       </Section>
 
-      <div className="grid lg:grid-cols-[auto_1fr] gap-6">
+      <Card className="p-4">
+        <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-3">Swin-T stages — pick one</div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+          {stages.map((s, i) => (
+            <button
+              key={i}
+              onClick={() => setStage(i)}
+              className={`text-left p-3 rounded-lg border transition-all
+                ${stage === i
+                  ? 'bg-teal-500/15 border-teal-500/60'
+                  : 'bg-slate-800/40 border-slate-700 hover:border-slate-600'}`}
+            >
+              <div className="flex items-baseline justify-between">
+                <span className={`font-medium ${stage === i ? 'text-teal-200' : 'text-slate-200'}`}>{s.name}</span>
+                <span className="font-mono text-[11px] text-slate-500">×{s.blocks}</span>
+              </div>
+              <div className="font-mono text-[11px] mt-1 leading-snug">
+                <div><span className="text-amber-300">{s.resolution}</span> <span className="text-slate-500">·</span> <span className="text-slate-300">{s.dim}-dim</span></div>
+                <div className="text-slate-400">{s.tokens.toLocaleString()} tokens</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </Card>
+
+      <div className="grid lg:grid-cols-2 gap-6">
         <Card className="p-5">
-          <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-3">Swin-T stages</div>
-          <div className="space-y-2">
-            {stages.map((s, i) => (
-              <button
-                key={i}
-                onClick={() => setStage(i)}
-                className={`w-full text-left p-3 rounded-lg border transition-all
-                  ${stage === i
-                    ? 'bg-teal-500/15 border-teal-500/60'
-                    : 'bg-slate-800/40 border-slate-700 hover:border-slate-600'}`}
-              >
-                <div className="flex items-baseline justify-between">
-                  <span className={`font-medium ${stage === i ? 'text-teal-200' : 'text-slate-200'}`}>{s.name}</span>
-                  <span className="font-mono text-[11px] text-slate-500">×{s.blocks}</span>
-                </div>
-                <div className="font-mono text-[11px] mt-1">
-                  <span className="text-amber-300">{s.resolution}</span>
-                  <span className="text-slate-500 mx-2">·</span>
-                  <span className="text-slate-300">{s.tokens.toLocaleString()} tokens</span>
-                  <span className="text-slate-500 mx-2">·</span>
-                  <span className="text-slate-300">{s.dim}-dim</span>
-                </div>
-              </button>
-            ))}
-          </div>
+          <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-3">Resolution at this stage</div>
+          <ResolutionViz stage={stage} />
         </Card>
 
-        <div className="space-y-4">
-          <Card className="p-5">
-            <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-3">Resolution at this stage</div>
-            <ResolutionViz stage={stage} />
-          </Card>
-
-          <Card className="p-5">
-            <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-3">Patch merging — how it works</div>
-            <PatchMergeDiagram />
-            <div className="mt-3 text-[11px] text-slate-500 italic leading-relaxed">
-              For each non-overlapping 2×2 block of tokens, concatenate the four <Eq>C</Eq>-dim vectors
-              into a <Eq>4C</Eq> vector, apply LayerNorm, then project to <Eq>2C</Eq>.
-              The number of tokens drops by 4×; the channel dimension doubles.
-            </div>
-          </Card>
-
-          <Card className="p-5">
-            <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/80 mb-3">
-              Try it · hover a merged patch to see its 4 sources
-            </div>
-            <PatchMergePlayground />
-          </Card>
-        </div>
+        <Card className="p-5">
+          <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/80 mb-3">
+            Try it · hover a merged patch to see its 4 sources
+          </div>
+          <PatchMergePlayground />
+        </Card>
       </div>
+
+      <Card className="p-5">
+        <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-3">Patch merging — how it works</div>
+        <div className="grid lg:grid-cols-[minmax(0,260px)_minmax(0,1fr)] gap-5 items-center">
+          <div className="text-[12px] text-slate-300 leading-relaxed space-y-2">
+            <p>
+              Take every non-overlapping <Eq>{String.raw`2 \times 2`}</Eq> block of tokens. Concatenate the
+              four <Eq>C</Eq>-dim vectors into a single <Eq>4C</Eq> vector,
+              apply LayerNorm, then project to <Eq>2C</Eq>.
+            </p>
+            <ul className="text-[11px] text-slate-400 list-disc pl-4 space-y-0.5">
+              <li>tokens <span className="text-amber-300">× ¼</span></li>
+              <li>channels <span className="text-amber-300">× 2</span></li>
+              <li>receptive field <span className="text-amber-300">× 2</span></li>
+            </ul>
+          </div>
+          <PatchMergeDiagram />
+        </div>
+      </Card>
 
       <Card className="p-5">
         <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-4">Full Swin-T architecture flow</div>
@@ -3529,7 +3721,15 @@ function CompareTab() {
       </div>
 
       <Card className="p-5">
-        <h3 className="font-serif text-lg text-slate-100 mb-4">Quick reference — ViT-B vs Swin-T</h3>
+        <h3 className="font-serif text-lg text-slate-100 mb-1">
+          Spec sheet · ViT-Base/16 vs Swin-Tiny
+        </h3>
+        <p className="text-[12px] text-slate-400 mb-4 leading-snug">
+          Two specific reference architectures benchmarked on the standard <span className="font-mono text-amber-300">224 × 224</span>
+          {' '}<span className="text-slate-300">ImageNet-1K</span> setup — not tied to any particular image you've uploaded.
+          ViT-Base/16 is the canonical 86M-param ViT; Swin-Tiny is the smallest Swin variant from the original paper.
+          All numbers below are reported per single forward pass on one <span className="font-mono text-amber-300">224 × 224 × 3</span> image.
+        </p>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -3541,13 +3741,13 @@ function CompareTab() {
             </thead>
             <tbody className="font-mono text-[12px]">
               {[
-                ['Parameters', '86 M', '28 M'],
-                ['FLOPs (224²)', '17.6 G', '4.5 G'],
-                ['Tokens', '197 (incl. CLS)', '3136 → 49 across stages'],
+                ['Parameters (total weights)', '86 M', '28 M'],
+                ['FLOPs · per 224² image', '17.6 G', '4.5 G'],
+                ['Tokens · per 224² image', '197 (incl. CLS)', '3136 → 49 across stages'],
                 ['Embed dim', '768 (constant)', '96 → 768 across stages'],
                 ['Attention', 'Global', 'Local 7×7 window + shift'],
                 ['Position', 'Absolute (learnable)', 'Relative bias'],
-                ['ImageNet-1K top-1', '77.9 %', '81.3 %'],
+                ['ImageNet-1K top-1 (224² eval)', '77.9 %', '81.3 %'],
                 ['Best for', 'Classification, CLIP', 'Detection, segmentation'],
               ].map(([k, a, b], i) => (
                 <tr key={i} className="border-b border-slate-800/60">
@@ -4113,82 +4313,176 @@ function ClassContribution({ image, attentionRows, gridN, preds, status, statusM
 }
 
 /* FlopsCostCard — translates the FLOPs gap into wall-clock seconds and
-   dollars on a real GPU. Slider for image side; live numbers update.
-   Makes "ViT is significantly more expensive" hit at the resolutions
-   that matter for real work (segmentation, detection at 1024+ px). */
-function FlopsCostCard() {
+   dollars on a real GPU. Now driven by the scan's `progress` so all
+   numbers and the rising line chart animate as the cat is scanned: at
+   t=0 the bills are zero, at t=1 they hit the per-image total. Slider
+   for image side controls the ceiling. */
+function FlopsCostCard({ progress = 1 }) {
   const [side, setSide] = useState(384);
   const P = 16, M = 7, L = 12, D = 768;
   const N = Math.round((side / P) ** 2);
   // Attention FLOPs per image (Q,K,V,O projections + scaled-dot product). Approximate.
-  const vitFlops = L * (4 * N * D * D + 2 * N * N * D);
-  const swinFlops = L * (4 * N * D * D + 2 * M * M * N * D);
-  const ratio = swinFlops > 0 ? vitFlops / swinFlops : 0;
+  const vitFlopsPeak = L * (4 * N * D * D + 2 * N * N * D);
+  const swinFlopsPeak = L * (4 * N * D * D + 2 * M * M * N * D);
+  const ratioPeak = swinFlopsPeak > 0 ? vitFlopsPeak / swinFlopsPeak : 0;
   // A100: ~312 TFLOPs FP16; one image throughput on a single device.
   const TFLOPs_PER_SEC = 312e12;
-  const vitSecPerImg = vitFlops / TFLOPs_PER_SEC;
-  const swinSecPerImg = swinFlops / TFLOPs_PER_SEC;
+  const vitSecPerImgPeak = vitFlopsPeak / TFLOPs_PER_SEC;
+  const swinSecPerImgPeak = swinFlopsPeak / TFLOPs_PER_SEC;
   const N_IMG = 1e6;
   const HOUR = 3600;
   const RATE = 1.5; // $/hour for a single A100 — typical cloud
-  const vitCost = (vitSecPerImg * N_IMG / HOUR) * RATE;
-  const swinCost = (swinSecPerImg * N_IMG / HOUR) * RATE;
-  const fmtFlops = (v) => v >= 1e12 ? `${(v / 1e12).toFixed(2)} T` : v >= 1e9 ? `${(v / 1e9).toFixed(2)} G` : `${(v / 1e6).toFixed(0)} M`;
-  const fmtCost = (v) => v >= 1 ? `$${v.toFixed(2)}` : v >= 0.01 ? `$${v.toFixed(3)}` : `$${v.toExponential(1)}`;
+  const vitCostPeak = (vitSecPerImgPeak * N_IMG / HOUR) * RATE;
+  const swinCostPeak = (swinSecPerImgPeak * N_IMG / HOUR) * RATE;
+
+  // Live values driven by scan progress. ViT grows linearly to its peak
+  // across full progress; Swin reaches its (smaller) peak earlier
+  // because its true work-per-image is `peak/ratioPeak` of ViT's.
+  const p = Math.max(0, Math.min(1, progress));
+  const vitFlops = p * vitFlopsPeak;
+  const swinFlops = Math.min(swinFlopsPeak, p * vitFlopsPeak);
+  const swinKneeP = Math.min(1, swinFlopsPeak / Math.max(1, vitFlopsPeak));
+  const liveRatio = swinFlops > 0 ? vitFlops / swinFlops : 0;
+  const vitSec = vitSecPerImgPeak * p;
+  const swinSec = Math.min(swinSecPerImgPeak, vitSecPerImgPeak * p);
+  const vitCost = vitCostPeak * p;
+  const swinCost = Math.min(swinCostPeak, vitCostPeak * p);
+
+  const fmtFlops = (v) => v >= 1e12 ? `${(v / 1e12).toFixed(2)} T` : v >= 1e9 ? `${(v / 1e9).toFixed(2)} G` : v >= 1e6 ? `${(v / 1e6).toFixed(1)} M` : `${Math.round(v).toLocaleString()}`;
+  const fmtCost = (v) => v >= 1 ? `$${v.toFixed(2)}` : v >= 0.01 ? `$${v.toFixed(3)}` : v > 0 ? `$${v.toExponential(1)}` : '$0';
+  const fmtSec = (s) => s >= 1 ? `${s.toFixed(2)} s` : s >= 1e-3 ? `${(s * 1e3).toFixed(2)} ms` : `${(s * 1e6).toFixed(1)} µs`;
+
   return (
     <div className="space-y-3">
-      {/* Full-width slider so all options have room. */}
+      {/* Image-side slider sets the ceiling; progress (from above) sets where on the curve we are. */}
       <div className="grid sm:grid-cols-[1fr_auto] gap-3 items-end">
         <Slider
-          label="Image side (px)"
+          label="Image side (px) — sets ceiling"
           value={side}
           options={[224, 384, 512, 768, 1024, 1536]}
           onChange={setSide}
         />
         <div className="text-[11px] font-mono text-slate-400 whitespace-nowrap">
-          P = 16 · L = 12 · M = 7 · <span className="text-amber-300">N = {N.toLocaleString()}</span>
+          P=16 · L=12 · M=7 · <span className="text-amber-300">N={N.toLocaleString()}</span> · scan {(p * 100).toFixed(0)}%
         </div>
       </div>
-      <div className="space-y-2">
-        <div className="grid grid-cols-3 gap-2 text-center">
-          <div className="rounded p-2 bg-amber-500/[0.06] border border-amber-500/30">
-            <div className="text-amber-300 font-mono text-[10px]">ViT-Base · per image</div>
-            <div className="text-slate-100 font-serif text-2xl leading-tight">{fmtFlops(vitFlops)}</div>
-            <div className="text-slate-500 text-[10px]">FLOPs · attention only</div>
-          </div>
-          <div className="rounded p-2 bg-teal-500/[0.06] border border-teal-500/30">
-            <div className="text-teal-300 font-mono text-[10px]">Swin-T · per image</div>
-            <div className="text-slate-100 font-serif text-2xl leading-tight">{fmtFlops(swinFlops)}</div>
-            <div className="text-slate-500 text-[10px]">FLOPs · attention only</div>
-          </div>
-          <div className="rounded p-2 bg-rose-500/[0.06] border border-rose-500/40">
-            <div className="text-rose-300 font-mono text-[10px]">ViT / Swin</div>
-            <div className="text-slate-100 font-serif text-2xl leading-tight">{ratio < 10 ? ratio.toFixed(1) : Math.round(ratio).toLocaleString()}×</div>
-            <div className="text-slate-500 text-[10px]">more compute for ViT</div>
-          </div>
+
+      <div className="grid grid-cols-3 gap-2 text-center">
+        <div className="rounded p-2 bg-amber-500/[0.06] border border-amber-500/30">
+          <div className="text-amber-300 font-mono text-[10px]">ViT-Base · live FLOPs</div>
+          <div className="text-slate-100 font-serif text-2xl leading-tight tabular-nums">{fmtFlops(vitFlops)}</div>
+          <div className="text-slate-500 text-[10px]">peak {fmtFlops(vitFlopsPeak)} · attn only</div>
         </div>
-        <div className="rounded p-2 bg-slate-800/40 border border-slate-700/60">
-          <div className="text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1">
-            Real money · 1M images on a single A100 @ ${RATE.toFixed(2)}/hr
-          </div>
-          <div className="grid grid-cols-2 gap-2 text-center">
-            <div>
-              <div className="font-serif text-xl text-amber-200">{fmtCost(vitCost)}</div>
-              <div className="text-[10px] font-mono text-slate-500">ViT · {(vitSecPerImg * N_IMG / 60).toFixed(1)} min total</div>
-            </div>
-            <div>
-              <div className="font-serif text-xl text-teal-200">{fmtCost(swinCost)}</div>
-              <div className="text-[10px] font-mono text-slate-500">Swin · {(swinSecPerImg * N_IMG / 60).toFixed(1)} min total</div>
-            </div>
-          </div>
+        <div className="rounded p-2 bg-teal-500/[0.06] border border-teal-500/30">
+          <div className="text-teal-300 font-mono text-[10px]">Swin-T · live FLOPs</div>
+          <div className="text-slate-100 font-serif text-2xl leading-tight tabular-nums">{fmtFlops(swinFlops)}</div>
+          <div className="text-slate-500 text-[10px]">peak {fmtFlops(swinFlopsPeak)} · attn only</div>
         </div>
-        <p className="text-[11px] text-slate-400 leading-snug">
-          Attention pairs only — real models also pay for projections, MLPs, and patch merging
-          (Swin) which narrow the gap a bit. The point: at 224 the gap is small; push to 1024+ and
-          ViT becomes prohibitive while Swin barely moves.
-        </p>
+        <div className="rounded p-2 bg-rose-500/[0.06] border border-rose-500/40">
+          <div className="text-rose-300 font-mono text-[10px]">ViT / Swin · live</div>
+          <div className="text-slate-100 font-serif text-2xl leading-tight tabular-nums">
+            {liveRatio > 0 ? (liveRatio < 10 ? liveRatio.toFixed(1) : Math.round(liveRatio).toLocaleString()) : '—'}×
+          </div>
+          <div className="text-slate-500 text-[10px]">peak {ratioPeak < 10 ? ratioPeak.toFixed(1) : Math.round(ratioPeak).toLocaleString()}×</div>
+        </div>
       </div>
+
+      {/* Rising chart — area lines grow as the cat above gets scanned. */}
+      <FlopsRiseChart
+        progress={p}
+        vitFlopsPeak={vitFlopsPeak}
+        swinFlopsPeak={swinFlopsPeak}
+        swinKneeP={swinKneeP}
+        fmtFlops={fmtFlops}
+      />
+
+      <div className="rounded p-2 bg-slate-800/40 border border-slate-700/60">
+        <div className="text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1">
+          Wall-clock & money · live for one image, peak for 1M images @ A100 ${RATE.toFixed(2)}/hr
+        </div>
+        <div className="grid grid-cols-2 gap-2 text-center">
+          <div>
+            <div className="font-serif text-xl text-amber-200 tabular-nums">{fmtSec(vitSec)}</div>
+            <div className="text-[10px] font-mono text-slate-500">ViT · 1 img · peak {fmtSec(vitSecPerImgPeak)}</div>
+            <div className="font-serif text-base text-amber-100 mt-1 tabular-nums">{fmtCost(vitCost)}</div>
+            <div className="text-[10px] font-mono text-slate-500">@ 1M images · peak {fmtCost(vitCostPeak)}</div>
+          </div>
+          <div>
+            <div className="font-serif text-xl text-teal-200 tabular-nums">{fmtSec(swinSec)}</div>
+            <div className="text-[10px] font-mono text-slate-500">Swin · 1 img · peak {fmtSec(swinSecPerImgPeak)}</div>
+            <div className="font-serif text-base text-teal-100 mt-1 tabular-nums">{fmtCost(swinCost)}</div>
+            <div className="text-[10px] font-mono text-slate-500">@ 1M images · peak {fmtCost(swinCostPeak)}</div>
+          </div>
+        </div>
+      </div>
+
+      <p className="text-[11px] text-slate-400 leading-snug">
+        Hit Play / Replay above. The cat above gets scanned — and the FLOPs/time/dollars climb at the same
+        rate. ViT's amber line is steeper and goes all the way to its (much higher) ceiling; Swin's teal
+        line plateaus early. Push the image-side slider to 1024+ and watch the gap between ceilings explode.
+      </p>
     </div>
+  );
+}
+
+/* FlopsRiseChart — rising-area twin lines for the FlopsCostCard. Same
+   visual language as StorageRiseChart so students recognise the
+   "it grows with replay" pattern. */
+function FlopsRiseChart({ progress, vitFlopsPeak, swinFlopsPeak, swinKneeP, fmtFlops }) {
+  const W = 640, H = 130;
+  const PAD_L = 60, PAD_R = 14, PAD_T = 8, PAD_B = 24;
+  const innerW = W - PAD_L - PAD_R;
+  const innerH = H - PAD_T - PAD_B;
+  const yMax = Math.max(1, vitFlopsPeak);
+  const yScale = v => PAD_T + innerH - (v / yMax) * innerH;
+  const xScale = p => PAD_L + Math.max(0, Math.min(1, p)) * innerW;
+  const baseline = PAD_T + innerH;
+
+  const vitX = xScale(progress);
+  const vitY = yScale(progress * vitFlopsPeak);
+  const kneeX = xScale(Math.min(progress, swinKneeP));
+  const kneeY = yScale(Math.min(progress, swinKneeP) * vitFlopsPeak);
+  const swinTipX = xScale(progress);
+  const swinTipY = yScale(Math.min(swinFlopsPeak, progress * vitFlopsPeak));
+
+  const vitArea = `M ${PAD_L} ${baseline} L ${vitX} ${vitY} L ${vitX} ${baseline} Z`;
+  const swinArea = progress <= swinKneeP
+    ? `M ${PAD_L} ${baseline} L ${swinTipX} ${swinTipY} L ${swinTipX} ${baseline} Z`
+    : `M ${PAD_L} ${baseline} L ${kneeX} ${kneeY} L ${swinTipX} ${swinTipY} L ${swinTipX} ${baseline} Z`;
+
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map(t => t * yMax);
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" preserveAspectRatio="none">
+      {ticks.map((t, i) => (
+        <g key={i}>
+          <line x1={PAD_L} y1={yScale(t)} x2={W - PAD_R} y2={yScale(t)}
+            stroke="rgba(148,163,184,0.14)" strokeWidth="0.6" />
+          <text x={PAD_L - 6} y={yScale(t) + 3} fontSize="9" textAnchor="end"
+            fill="#64748b" fontFamily="monospace">{fmtFlops(t)}</text>
+        </g>
+      ))}
+      <line x1={PAD_L} y1={baseline} x2={W - PAD_R} y2={baseline} stroke="#475569" strokeWidth="0.8" />
+      <line x1={PAD_L} y1={PAD_T} x2={PAD_L} y2={baseline} stroke="#475569" strokeWidth="0.8" />
+
+      {/* Faint targets — show where each line would end at full play */}
+      <line x1={PAD_L} y1={baseline} x2={xScale(1)} y2={yScale(vitFlopsPeak)}
+        stroke="rgba(245,158,11,0.25)" strokeWidth="1" strokeDasharray="3 3" />
+      <line x1={PAD_L} y1={baseline} x2={xScale(swinKneeP)} y2={yScale(swinFlopsPeak)}
+        stroke="rgba(20,184,166,0.25)" strokeWidth="1" strokeDasharray="3 3" />
+      <line x1={xScale(swinKneeP)} y1={yScale(swinFlopsPeak)} x2={xScale(1)} y2={yScale(swinFlopsPeak)}
+        stroke="rgba(20,184,166,0.25)" strokeWidth="1" strokeDasharray="3 3" />
+
+      <path d={vitArea} fill="rgba(245,158,11,0.32)" stroke="#f59e0b" strokeWidth="1.6" />
+      <path d={swinArea} fill="rgba(20,184,166,0.32)" stroke="#14b8a6" strokeWidth="1.6" />
+
+      <circle cx={vitX} cy={vitY} r="3.4" fill="#fbbf24" stroke="#0f172a" strokeWidth="1" />
+      <circle cx={swinTipX} cy={swinTipY} r="3.4" fill="#2dd4bf" stroke="#0f172a" strokeWidth="1" />
+
+      <text x={PAD_L} y={H - 6} fontSize="10" fill="#64748b" fontFamily="monospace">play 0%</text>
+      <text x={(PAD_L + W - PAD_R) / 2} y={H - 6} fontSize="10" textAnchor="middle" fill="#64748b" fontFamily="monospace">progress →</text>
+      <text x={W - PAD_R} y={H - 6} fontSize="10" textAnchor="end" fill="#64748b" fontFamily="monospace">100%</text>
+    </svg>
   );
 }
 
@@ -4757,6 +5051,20 @@ function LiveDemoTab() {
         </Card>
       </div>
 
+      {/* ViT vs Swin · live FLOPs + time + $ that animate with the scan. */}
+      <Card className="p-3">
+        <div className="flex items-baseline justify-between mb-2 flex-wrap gap-2">
+          <div className="flex items-center gap-1.5">
+            <Tag color="rose">ViT vs Swin</Tag>
+            <span className="text-[12px] text-slate-200">FLOPs · time · $ — rises as the cat is scanned</span>
+          </div>
+          <span className="text-[10px] font-mono text-slate-500">
+            hit Play / Replay → both lines climb · drag resolution to set the ceiling
+          </span>
+        </div>
+        <FlopsCostCard progress={progress} />
+      </Card>
+
       {/* Compact controls row — kept directly under the scan canvases so
           the core "interactive part" (gallery + scans + controls) all
           sits within one screen. */}
@@ -4827,6 +5135,31 @@ function LiveDemoTab() {
         </div>
       </Card>
 
+      {/* Memory rises as the scan plays — ViT's attention matrix balloons
+          quadratically, Swin's stays linear. Driven by the same progress
+          state as the scans, so hitting Play / Replay makes both lines
+          climb in real time. */}
+      <Card className="p-3">
+        <div className="flex items-baseline justify-between mb-2 flex-wrap gap-2">
+          <div className="flex items-center gap-1.5">
+            <Tag color="rose">Memory</Tag>
+            <span className="text-[12px] text-slate-200">Attention scores in memory · rises with replay</span>
+          </div>
+          <span className="text-[10px] font-mono text-slate-500">
+            ViT climbs {Math.max(1, Math.round(SCAN_N / (SCAN_M * SCAN_M)))}× steeper · Swin plateaus early
+          </span>
+        </div>
+        <StorageRiseChart
+          progress={progress}
+          vitTotal={vitTotalOps}
+          swinTotal={swinTotalOps}
+          vitOps={vitOpsCount}
+          swinOps={swinOpsCount}
+          N={SCAN_N}
+          M={SCAN_M}
+        />
+      </Card>
+
       {/* ----- Below-the-fold deep-dive cards (scroll for these) ----- */}
 
       {/* Swin · 2-layer reach lab — pick a patch, count its peers across
@@ -4842,17 +5175,6 @@ function LiveDemoTab() {
         <SwinReachLab image={imgRef.current} imgVersion={imgVersion}/>
       </Card>
 
-      {/* ViT vs Swin · live FLOPs + real-money cost translator. */}
-      <Card className="p-3">
-        <div className="flex items-baseline justify-between mb-2 flex-wrap gap-2">
-          <div className="flex items-center gap-1.5">
-            <Tag color="rose">ViT vs Swin</Tag>
-            <span className="text-[12px] text-slate-200">FLOPs · time · $</span>
-          </div>
-          <span className="text-[10px] font-mono text-slate-500">drag the resolution → watch the gap explode</span>
-        </div>
-        <FlopsCostCard/>
-      </Card>
 
       {/* Swin · 4 stages of patch merging — at the very bottom now. */}
       <Card className="p-3">
@@ -4881,6 +5203,108 @@ function LiveDemoTab() {
           makes Swin a usable backbone for detection / segmentation.
         </p>
       </Card>
+    </div>
+  );
+}
+
+/* StorageRiseChart — two area-line plots that grow with `progress`.
+   x-axis = play progress 0→1.  y = cumulative attention scores held
+   in memory.  ViT slope is N(N-1) per layer, Swin slope is N(M²-1) —
+   so Swin plateaus once its (much smaller) total is reached, while
+   ViT keeps climbing all the way to the right edge of the chart. */
+function StorageRiseChart({ progress, vitTotal, swinTotal, vitOps, swinOps, N, M }) {
+  const W = 640, H = 170;
+  const PAD_L = 56, PAD_R = 14, PAD_T = 10, PAD_B = 26;
+  const innerW = W - PAD_L - PAD_R;
+  const innerH = H - PAD_T - PAD_B;
+  const SCORE_BYTES = 4;
+
+  const fmtBytes = b => {
+    if (b >= 1e9) return (b / 1e9).toFixed(2) + ' GB';
+    if (b >= 1e6) return (b / 1e6).toFixed(2) + ' MB';
+    if (b >= 1e3) return (b / 1e3).toFixed(1) + ' KB';
+    return Math.round(b) + ' B';
+  };
+
+  const yMaxBytes = Math.max(vitTotal, 1) * SCORE_BYTES;
+  const yScale = v => PAD_T + innerH - (v / yMaxBytes) * innerH;
+  const xScale = p => PAD_L + Math.max(0, Math.min(1, p)) * innerW;
+
+  const swinPlateauP = Math.min(1, swinTotal / Math.max(1, vitTotal));
+  const vitX = xScale(progress);
+  const vitY = yScale(vitOps * SCORE_BYTES);
+  const swinKneeX = xScale(Math.min(progress, swinPlateauP));
+  const swinKneeY = yScale(Math.min(progress, swinPlateauP) * vitTotal * SCORE_BYTES);
+  const swinTipX = xScale(progress);
+  const swinTipY = yScale(swinOps * SCORE_BYTES);
+
+  const baseline = PAD_T + innerH;
+  const vitArea = `M ${PAD_L} ${baseline} L ${vitX} ${vitY} L ${vitX} ${baseline} Z`;
+  const swinArea = progress <= swinPlateauP
+    ? `M ${PAD_L} ${baseline} L ${swinTipX} ${swinTipY} L ${swinTipX} ${baseline} Z`
+    : `M ${PAD_L} ${baseline} L ${swinKneeX} ${swinKneeY} L ${swinTipX} ${swinTipY} L ${swinTipX} ${baseline} Z`;
+
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map(t => t * yMaxBytes);
+  const ratio = swinOps > 0 ? (vitOps / swinOps) : 0;
+
+  return (
+    <div>
+      <div className="grid grid-cols-3 gap-2 mb-2">
+        <div className="rounded border border-amber-500/40 bg-amber-500/[0.06] p-2">
+          <div className="text-[10px] font-mono text-amber-300 uppercase tracking-wider">ViT live</div>
+          <div className="font-mono text-amber-100 text-base tabular-nums">{fmtBytes(vitOps * SCORE_BYTES)}</div>
+          <div className="text-[10px] font-mono text-slate-500">peak {fmtBytes(vitTotal * SCORE_BYTES)} · {vitTotal.toLocaleString()} scores</div>
+        </div>
+        <div className="rounded border border-teal-500/40 bg-teal-500/[0.06] p-2">
+          <div className="text-[10px] font-mono text-teal-300 uppercase tracking-wider">Swin live</div>
+          <div className="font-mono text-teal-100 text-base tabular-nums">{fmtBytes(swinOps * SCORE_BYTES)}</div>
+          <div className="text-[10px] font-mono text-slate-500">peak {fmtBytes(swinTotal * SCORE_BYTES)} · {swinTotal.toLocaleString()} scores</div>
+        </div>
+        <div className="rounded border border-rose-500/40 bg-rose-500/[0.06] p-2">
+          <div className="text-[10px] font-mono text-rose-300 uppercase tracking-wider">Ratio (ViT ÷ Swin)</div>
+          <div className="font-mono text-rose-100 text-base tabular-nums">{ratio > 0 ? ratio.toFixed(2) + '×' : '—'}</div>
+          <div className="text-[10px] font-mono text-slate-500">peak {(vitTotal / Math.max(1, swinTotal)).toFixed(2)}×</div>
+        </div>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" preserveAspectRatio="none">
+        {ticks.map((t, i) => (
+          <g key={i}>
+            <line x1={PAD_L} y1={yScale(t)} x2={W - PAD_R} y2={yScale(t)}
+              stroke="rgba(148,163,184,0.14)" strokeWidth="0.6" />
+            <text x={PAD_L - 6} y={yScale(t) + 3} fontSize="9" textAnchor="end"
+              fill="#64748b" fontFamily="monospace">{fmtBytes(t)}</text>
+          </g>
+        ))}
+        <line x1={PAD_L} y1={baseline} x2={W - PAD_R} y2={baseline} stroke="#475569" strokeWidth="0.8" />
+        <line x1={PAD_L} y1={PAD_T} x2={PAD_L} y2={baseline} stroke="#475569" strokeWidth="0.8" />
+
+        {/* Faint full-progress targets so students can see the destination */}
+        <line x1={PAD_L} y1={baseline} x2={xScale(1)} y2={yScale(vitTotal * SCORE_BYTES)}
+          stroke="rgba(245,158,11,0.25)" strokeWidth="1" strokeDasharray="3 3" />
+        <line x1={PAD_L} y1={baseline} x2={xScale(swinPlateauP)} y2={yScale(swinTotal * SCORE_BYTES)}
+          stroke="rgba(20,184,166,0.25)" strokeWidth="1" strokeDasharray="3 3" />
+        <line x1={xScale(swinPlateauP)} y1={yScale(swinTotal * SCORE_BYTES)} x2={xScale(1)} y2={yScale(swinTotal * SCORE_BYTES)}
+          stroke="rgba(20,184,166,0.25)" strokeWidth="1" strokeDasharray="3 3" />
+
+        {/* Live areas — these grow with progress */}
+        <path d={vitArea} fill="rgba(245,158,11,0.32)" stroke="#f59e0b" strokeWidth="1.6" />
+        <path d={swinArea} fill="rgba(20,184,166,0.32)" stroke="#14b8a6" strokeWidth="1.6" />
+
+        {/* Tip dots */}
+        <circle cx={vitX} cy={vitY} r="3.4" fill="#fbbf24" stroke="#0f172a" strokeWidth="1" />
+        <circle cx={swinTipX} cy={swinTipY} r="3.4" fill="#2dd4bf" stroke="#0f172a" strokeWidth="1" />
+
+        {/* x-axis labels */}
+        <text x={PAD_L} y={H - 8} fontSize="10" fill="#64748b" fontFamily="monospace">play 0%</text>
+        <text x={(PAD_L + W - PAD_R) / 2} y={H - 8} fontSize="10" textAnchor="middle" fill="#64748b" fontFamily="monospace">progress →</text>
+        <text x={W - PAD_R} y={H - 8} fontSize="10" textAnchor="end" fill="#64748b" fontFamily="monospace">100%</text>
+      </svg>
+      <p className="text-[10px] text-slate-400 mt-2 leading-snug">
+        Each attention score is a 4-byte fp32 cell. ViT keeps an <span className="text-amber-300">N×N</span> matrix
+        ({N}² = {(N * N).toLocaleString()} scores), Swin only stores within each <span className="text-teal-300">M×M</span> window
+        ({N}·{M * M} = {(N * M * M).toLocaleString()} scores). Hit Play / Replay — both lines rise, but Swin plateaus early
+        while ViT keeps climbing.
+      </p>
     </div>
   );
 }
