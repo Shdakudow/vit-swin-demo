@@ -5,21 +5,32 @@ import {
   ArrowRight, Hash, Crosshair, Workflow, Microscope, Sparkles,
   Upload, Loader2, Brain, HelpCircle, Lightbulb, Check, X
 } from 'lucide-react';
-import { InlineMath, BlockMath } from 'react-katex';
+import katex from 'katex';
 import 'katex/dist/katex.min.css';
 
-/* TeX inline + block — thin wrappers around react-katex with our colour
-   scheme. Use TeX for inline equations (\sqrt, \frac) and TeXBlock for
-   centred display equations. Falls back to a plain <span> on render
-   error so a malformed string can't break the page. */
-const TeX = ({ children }) => {
-  try { return <InlineMath math={typeof children === 'string' ? children : String(children)}/>; }
-  catch { return <span className="font-mono text-amber-200">{children}</span>; }
-};
-const TeXBlock = ({ children }) => {
-  try { return <BlockMath math={typeof children === 'string' ? children : String(children)}/>; }
-  catch { return <pre className="font-mono text-amber-200 text-sm">{children}</pre>; }
-};
+/* TeX inline + block — call KaTeX directly (skipping react-katex which has
+   spotty React-19 support) and inject the rendered HTML. throwOnError:false
+   shows a red error inline rather than blowing up the whole page. */
+function renderTeX(src, displayMode) {
+  try {
+    return katex.renderToString(typeof src === 'string' ? src : String(src), {
+      throwOnError: false,
+      displayMode,
+      strict: 'ignore',
+      output: 'html',
+    });
+  } catch (err) {
+    return `<span style="color:#fca5a5;font-family:monospace">${String(err && err.message || err)}</span>`;
+  }
+}
+
+const TeX = ({ children }) => (
+  <span dangerouslySetInnerHTML={{ __html: renderTeX(children, false) }} />
+);
+
+const TeXBlock = ({ children }) => (
+  <div className="my-1" dangerouslySetInnerHTML={{ __html: renderTeX(children, true) }} />
+);
 
 /* =========================================================
    Tiny linalg helpers (deterministic, seeded).
@@ -276,22 +287,19 @@ const Tag = ({ children, color = 'amber' }) => {
   );
 };
 
-/* Eq — inline LaTeX equation. Content must be a valid LaTeX string.
-   Falls back to monospace amber on render error so a malformed string
-   can't crash the page. */
+/* Eq — inline LaTeX equation, rendered by calling KaTeX directly and
+   injecting the resulting HTML. Wrapped in an amber-tinted pill so it
+   stands out from prose. */
 const Eq = ({ children }) => {
   const src = typeof children === 'string'
     ? children
     : Array.isArray(children) ? children.join('') : String(children);
-  try {
-    return (
-      <span className="inline-block align-middle bg-amber-500/5 border border-amber-500/20 rounded px-1.5 py-0.5 text-amber-200">
-        <InlineMath math={src}/>
-      </span>
-    );
-  } catch {
-    return <span className="font-mono text-amber-200">{src}</span>;
-  }
+  return (
+    <span
+      className="inline-block align-middle bg-amber-500/5 border border-amber-500/20 rounded px-1.5 py-0.5 text-amber-200"
+      dangerouslySetInnerHTML={{ __html: renderTeX(src, false) }}
+    />
+  );
 };
 
 const Section = ({ icon: Icon, title, kicker, children }) => (
