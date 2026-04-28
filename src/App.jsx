@@ -554,9 +554,17 @@ function OverviewTab() {
       <div className="grid md:grid-cols-2 gap-5">
         <Card className="p-5">
           <div>
-            <div className="flex items-center gap-2 mb-3">
+            <div className="flex items-center gap-2 mb-3 flex-wrap">
               <Tag color="amber">ViT · 2020</Tag>
               <Tag color="slate">Dosovitskiy et al.</Tag>
+              <a
+                href="https://arxiv.org/abs/2010.11929"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[11px] font-mono text-amber-300 hover:text-amber-200 underline decoration-dotted underline-offset-2"
+              >
+                arXiv:2010.11929 ↗
+              </a>
             </div>
             <h3 className="font-serif text-xl text-slate-100 mb-3">Vision Transformer</h3>
             <p className="text-slate-300 text-sm mb-4 leading-relaxed">
@@ -583,9 +591,17 @@ function OverviewTab() {
 
         <Card className="p-5">
           <div>
-            <div className="flex items-center gap-2 mb-3">
+            <div className="flex items-center gap-2 mb-3 flex-wrap">
               <Tag color="teal">Swin · 2021</Tag>
               <Tag color="slate">Liu et al.</Tag>
+              <a
+                href="https://arxiv.org/abs/2103.14030"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[11px] font-mono text-teal-300 hover:text-teal-200 underline decoration-dotted underline-offset-2"
+              >
+                arXiv:2103.14030 ↗
+              </a>
             </div>
             <h3 className="font-serif text-xl text-slate-100 mb-3">Swin Transformer</h3>
             <p className="text-slate-300 text-sm mb-4 leading-relaxed">
@@ -978,6 +994,19 @@ const POS_METHODS = [
   { id: 'relbias',  name: 'Swin Relative Bias',      kind: 'modern'  },
 ];
 
+const PaperLink = ({ href, label, color = 'amber' }) => (
+  <a
+    href={href}
+    target="_blank"
+    rel="noopener noreferrer"
+    className={`inline-flex items-center gap-1 text-[10px] font-mono align-middle ml-1
+      ${color === 'teal' ? 'text-teal-300 hover:text-teal-200' : 'text-amber-300 hover:text-amber-200'}
+      underline decoration-dotted underline-offset-2`}
+  >
+    {label} ↗
+  </a>
+);
+
 const POS_METHOD_INFO = {
   learned: (
     <>
@@ -985,6 +1014,7 @@ const POS_METHOD_INFO = {
       A free <Eq>{String.raw`E_{\text{pos}}\in\mathbb{R}^{N\times D}`}</Eq> with random Gaussian rows.
       No spatial structure baked in — only the diagonal lights up because each position is similar to itself.
       Spatial relations have to be <em>learned</em> from the data.
+      <PaperLink href="https://arxiv.org/abs/2010.11929" label="ViT · arXiv:2010.11929" />
     </>
   ),
   learnedT: (
@@ -993,6 +1023,7 @@ const POS_METHOD_INFO = {
       actually look like after ImageNet training (Dosovitskiy et al., 2021, Fig. 7). The model discovers
       a smooth 2D structure on its own — nearby positions develop similar embeddings. We approximate it
       as <Eq>{String.raw`\exp(-\|p_i - p_j\|^2 / 2\sigma^2)`}</Eq>.
+      <PaperLink href="https://arxiv.org/abs/2010.11929" label="ViT · arXiv:2010.11929" />
     </>
   ),
   sin1d: (
@@ -1001,6 +1032,7 @@ const POS_METHOD_INFO = {
       Patches are flattened to row-major index <Eq>i</Eq>; alternating dims use
       <Eq>{String.raw`\sin(i\cdot\omega_k)`}</Eq>, <Eq>{String.raw`\cos(i\cdot\omega_k)`}</Eq>.
       Cheap, no params — but the 2D image structure is collapsed to a single dimension.
+      <PaperLink href="https://arxiv.org/abs/1706.03762" label="Vaswani et al. · arXiv:1706.03762" />
     </>
   ),
   sin2d: (
@@ -1009,6 +1041,7 @@ const POS_METHOD_INFO = {
       Half the dims encode <Eq>{String.raw`p_x`}</Eq>, the other half encode <Eq>{String.raw`p_y`}</Eq> with
       sin/cos at log-spaced frequencies. Used in DETR, Stable-Diffusion's UNet, and many ViT variants.
       Notice the cross-shaped bright row + column around the clicked patch.
+      <PaperLink href="https://arxiv.org/abs/2005.12872" label="DETR · arXiv:2005.12872" />
     </>
   ),
   rope: (
@@ -1018,6 +1051,7 @@ const POS_METHOD_INFO = {
       RoPE <em>rotates</em> Q and K dim-pairs by an angle proportional to position.
       Q·K then depends only on the <em>relative</em> offset:
       <Eq>{String.raw`q_i^\top k_j = f(i-j)`}</Eq>. We extend it to 2D by splitting dims between rows / cols.
+      <PaperLink href="https://arxiv.org/abs/2104.09864" label="RoFormer · arXiv:2104.09864" color="teal" />
     </>
   ),
   alibi: (
@@ -1026,6 +1060,7 @@ const POS_METHOD_INFO = {
       · used in MPT, BLOOM. No position embeddings at all — instead, a <em>linear distance penalty</em>
       <Eq>{String.raw`-m \cdot |i - j|`}</Eq> is added directly to attention logits.
       Strong locality bias and trivially extrapolates to longer sequences. We use 2D Manhattan distance for vision.
+      <PaperLink href="https://arxiv.org/abs/2108.12409" label="ALiBi · arXiv:2108.12409" color="teal" />
     </>
   ),
   relbias: (
@@ -1034,6 +1069,7 @@ const POS_METHOD_INFO = {
       · a learnable scalar <Eq>{String.raw`B_{\Delta x, \Delta y}`}</Eq> per relative offset, added to attention
       logits inside each window. Doesn't add a vector to tokens — just biases attention by relative position.
       We approximate "what gets learned" as a smooth 2D Gaussian falloff.
+      <PaperLink href="https://arxiv.org/abs/2103.14030" label="Swin · arXiv:2103.14030" color="teal" />
     </>
   ),
 };
@@ -1202,22 +1238,24 @@ function PositionTab() {
           {' '}<Eq>{String.raw`E_{\text{pos}}[i]`}</Eq> to each token to mark "this came from position i".
         </p>
 
-        <div className="grid lg:grid-cols-2 gap-5">
-          <Card className="p-5">
-            <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-3">
-              Try it
+        <div className="grid lg:grid-cols-[minmax(0,260px)_minmax(0,1fr)] gap-5 items-start">
+          <Card className="p-4">
+            <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-2">
+              Try it · 4×4 patch sequence
             </div>
-            <div className="flex items-center gap-1 mb-4 flex-wrap">
+            {/* 4×4 grid matches the actual image arrangement — no wasted
+                horizontal space, and visually accurate to N=16. */}
+            <div className="grid grid-cols-4 gap-1 mb-3 max-w-[200px] mx-auto">
               {order.map(i => (
                 <div
                   key={i}
-                  className="w-10 h-10 rounded border flex flex-col items-center justify-center font-mono text-amber-200 transition-all"
+                  className="aspect-square rounded border flex flex-col items-center justify-center font-mono text-amber-200 transition-all"
                   style={{
                     background: posOn ? 'rgba(245,158,11,0.10)' : 'rgba(100,116,139,0.10)',
                     borderColor: posOn ? 'rgba(245,158,11,0.40)' : 'rgba(100,116,139,0.40)',
                   }}
                 >
-                  <span className="text-xs leading-none">{i}</span>
+                  <span className="text-[11px] leading-none">{i}</span>
                   {posOn && <span className="text-[8px] text-teal-300 leading-none mt-0.5">@{i}</span>}
                 </div>
               ))}
@@ -1226,7 +1264,7 @@ function PositionTab() {
               <Toggle label="Shuffle patches" value={shuffle} onChange={setShuffle} />
               <Toggle label="Add position embeddings" value={posOn} onChange={setPosOn} />
             </div>
-            <div className="mt-4 text-[12px] leading-relaxed">
+            <div className="mt-3 text-[12px] leading-relaxed">
               {!posOn && shuffle && <span className="text-rose-300">No position info + shuffled → the model treats this as the same input as the original. Spatial structure is lost.</span>}
               {!posOn && !shuffle && <span className="text-slate-400">No position info. It happens to look "right" because we didn't shuffle, but the model isn't actually using the order.</span>}
               {posOn && shuffle && <span className="text-amber-200">Shuffled, but each patch carries its position tag (the small <span className="text-teal-300">@i</span>). The model can recover the original spatial structure.</span>}
@@ -4416,11 +4454,6 @@ function FlopsCostCard({ progress = 1 }) {
         </div>
       </div>
 
-      <p className="text-[11px] text-slate-400 leading-snug">
-        Hit Play / Replay above. The cat above gets scanned — and the FLOPs/time/dollars climb at the same
-        rate. ViT's amber line is steeper and goes all the way to its (much higher) ceiling; Swin's teal
-        line plateaus early. Push the image-side slider to 1024+ and watch the gap between ceilings explode.
-      </p>
     </div>
   );
 }
@@ -4924,6 +4957,75 @@ function LiveDemoTab() {
         </div>
       </Card>
 
+      {/* Play / Replay strip — moved up so Play, ViT-vs-Swin, and the scans
+          all sit on the same screen. Patch size + reset are kept inline. */}
+      <Card className="p-2">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2 items-end">
+          <div className="flex gap-2">
+            <button
+              onClick={() => { if (progress >= 1) setProgress(0); setPlaying(p => !p); }}
+              className="px-3 py-1.5 rounded-md bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-200 flex items-center gap-1.5 text-sm font-medium transition-all"
+            >
+              {playing ? <Pause size={13}/> : <Play size={13}/>}
+              {playing ? 'Pause' : (progress >= 1 ? 'Replay' : 'Play')}
+            </button>
+            <button
+              onClick={reset}
+              className="px-2.5 py-1.5 rounded-md bg-slate-800/60 hover:bg-slate-800 border border-slate-700 text-slate-300 transition-all"
+              title="Reset"
+            >
+              <RotateCcw size={13}/>
+            </button>
+          </div>
+          <Slider
+            label="Progress"
+            value={Math.round(progress * 100)}
+            min={0} max={100} suffix="%"
+            onChange={v => { setPlaying(false); setProgress(v / 100); }}
+          />
+          <Slider
+            label="Speed"
+            value={speed}
+            options={['Slow', 'Medium', 'Fast']}
+            onChange={setSpeed}
+          />
+          <div>
+            <div className="flex items-baseline justify-between mb-1">
+              <label className="text-[11px] font-mono text-slate-400 uppercase tracking-wider">Patch (px)</label>
+              <span className="font-mono text-amber-300 text-sm">{patchSize}</span>
+            </div>
+            <div className="flex gap-1 items-stretch">
+              {[48, 64, 72, 90, 120].map(opt => (
+                <button
+                  key={opt}
+                  onClick={() => { setPatchSize(opt); reset(); }}
+                  className={`flex-1 px-1.5 py-1 rounded text-xs font-mono border transition-all
+                    ${patchSize === opt
+                      ? 'bg-amber-500/20 border-amber-500/50 text-amber-200'
+                      : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-600'}`}
+                >
+                  {opt}
+                </button>
+              ))}
+              <input
+                type="number"
+                min={8}
+                max={120}
+                step={1}
+                value={patchSize}
+                onChange={e => {
+                  const v = Math.max(8, Math.min(120, Number(e.target.value) || 8));
+                  setPatchSize(v);
+                  reset();
+                }}
+                className="w-12 px-1.5 py-1 rounded text-xs font-mono bg-slate-900 border border-slate-700 text-amber-200 focus:border-amber-500 focus:outline-none"
+                aria-label="Custom patch size"
+              />
+            </div>
+          </div>
+        </div>
+      </Card>
+
       {/* Three-column main row: ViT scan/matrix · Swin scan/matrix · per-class predictions */}
       <div className="grid lg:grid-cols-3 gap-3">
         <Card className="p-3">
@@ -5063,76 +5165,6 @@ function LiveDemoTab() {
           </span>
         </div>
         <FlopsCostCard progress={progress} />
-      </Card>
-
-      {/* Compact controls row — kept directly under the scan canvases so
-          the core "interactive part" (gallery + scans + controls) all
-          sits within one screen. */}
-      <Card className="p-3">
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
-          <div className="flex gap-2">
-            <button
-              onClick={() => { if (progress >= 1) setProgress(0); setPlaying(p => !p); }}
-              className="px-3 py-1.5 rounded-md bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-200 flex items-center gap-1.5 text-sm font-medium transition-all"
-            >
-              {playing ? <Pause size={13}/> : <Play size={13}/>}
-              {playing ? 'Pause' : (progress >= 1 ? 'Replay' : 'Play')}
-            </button>
-            <button
-              onClick={reset}
-              className="px-2.5 py-1.5 rounded-md bg-slate-800/60 hover:bg-slate-800 border border-slate-700 text-slate-300 transition-all"
-              title="Reset"
-            >
-              <RotateCcw size={13}/>
-            </button>
-          </div>
-          <Slider
-            label="Progress"
-            value={Math.round(progress * 100)}
-            min={0} max={100} suffix="%"
-            onChange={v => { setPlaying(false); setProgress(v / 100); }}
-          />
-          <Slider
-            label="Speed"
-            value={speed}
-            options={['Slow', 'Medium', 'Fast']}
-            onChange={setSpeed}
-          />
-          <div>
-            <div className="flex items-baseline justify-between mb-1">
-              <label className="text-[11px] font-mono text-slate-400 uppercase tracking-wider">Patch (px)</label>
-              <span className="font-mono text-amber-300 text-sm">{patchSize}</span>
-            </div>
-            <div className="flex gap-1 items-stretch">
-              {[48, 64, 72, 90, 120].map(opt => (
-                <button
-                  key={opt}
-                  onClick={() => { setPatchSize(opt); reset(); }}
-                  className={`flex-1 px-1.5 py-1 rounded text-xs font-mono border transition-all
-                    ${patchSize === opt
-                      ? 'bg-amber-500/20 border-amber-500/50 text-amber-200'
-                      : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-600'}`}
-                >
-                  {opt}
-                </button>
-              ))}
-              <input
-                type="number"
-                min={8}
-                max={120}
-                step={1}
-                value={patchSize}
-                onChange={e => {
-                  const v = Math.max(8, Math.min(120, Number(e.target.value) || 8));
-                  setPatchSize(v);
-                  reset();
-                }}
-                className="w-12 px-1.5 py-1 rounded text-xs font-mono bg-slate-900 border border-slate-700 text-amber-200 focus:border-amber-500 focus:outline-none"
-                aria-label="Custom patch size"
-              />
-            </div>
-          </div>
-        </div>
       </Card>
 
       {/* Memory rises as the scan plays — ViT's attention matrix balloons
