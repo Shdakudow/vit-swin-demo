@@ -5466,19 +5466,13 @@ function HowToUseBadge({ instructions }) {
   );
 }
 
-/* usePlayClickedOnce — persists "the user has hit Play at least once"
-   across reloads via localStorage. Used by the Live-Demo Play button to
-   stop shimmering / show the "click me" callout only on the very first
-   visit (per browser). */
+/* usePlayClickedOnce — tracks "the user has hit Play at least once
+   in this session". Resets on every page reload, so the shimmer and
+   the 'Click me 👉' hint reappear each fresh visit and disappear
+   only after the first click within that session. */
 function usePlayClickedOnce() {
-  const [clicked, setClicked] = useState(() => {
-    try { return localStorage.getItem('live_play_clicked') === '1'; } catch { return false; }
-  });
-  const markClicked = () => {
-    if (clicked) return;
-    setClicked(true);
-    try { localStorage.setItem('live_play_clicked', '1'); } catch {}
-  };
+  const [clicked, setClicked] = useState(false);
+  const markClicked = () => setClicked(true);
   return [clicked, markClicked];
 }
 
