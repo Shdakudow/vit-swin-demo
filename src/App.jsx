@@ -5208,8 +5208,10 @@ function LiveDemoTab() {
         </Card>
       </div>
 
-      {/* FLOPs + Memory side by side — both grow with the scan's progress. */}
-      <div className="grid lg:grid-cols-2 gap-3">
+      {/* FLOPs + Memory side by side — both grow with the scan's progress.
+          md: breakpoint so iPad portrait keeps them paired horizontally
+          (avoids the tall stacked gap below the predictions card). */}
+      <div className="grid md:grid-cols-2 gap-3">
         <Card className="p-3">
           <div className="flex items-baseline justify-between mb-2 flex-wrap gap-1">
             <div className="flex items-center gap-1.5">
