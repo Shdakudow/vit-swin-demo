@@ -4462,8 +4462,8 @@ function FlopsCostCard({ progress = 1 }) {
    visual language as StorageRiseChart so students recognise the
    "it grows with replay" pattern. */
 function FlopsRiseChart({ progress, vitFlopsPeak, swinFlopsPeak, swinKneeP, fmtFlops }) {
-  const W = 640, H = 130;
-  const PAD_L = 60, PAD_R = 14, PAD_T = 8, PAD_B = 24;
+  const W = 640, H = 96;
+  const PAD_L = 56, PAD_R = 10, PAD_T = 6, PAD_B = 20;
   const innerW = W - PAD_L - PAD_R;
   const innerH = H - PAD_T - PAD_B;
   const yMax = Math.max(1, vitFlopsPeak);
@@ -4930,10 +4930,10 @@ function LiveDemoTab() {
     : 'ready';
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2">
       {/* Compact header */}
       <div className="flex items-baseline justify-between flex-wrap gap-2">
-        <h2 className="font-serif text-2xl text-slate-100 tracking-tight">
+        <h2 className="font-serif text-xl text-slate-100 tracking-tight">
           Watch the model classify
         </h2>
         <span className="text-[11px] font-mono text-slate-400">
@@ -4941,88 +4941,19 @@ function LiveDemoTab() {
         </span>
       </div>
 
-      {/* Image gallery — compact single row, gallery presets only. */}
-      <Card className="p-2">
-        <div className="grid grid-cols-3 gap-2">
+      {/* Image gallery — slim single row of thumbs to keep vertical budget low. */}
+      <Card className="p-1.5">
+        <div className="grid grid-cols-3 gap-1.5">
           {GALLERY.map(g => (
             <button
               key={g.id}
               onClick={() => { setCustomSrc(null); setGalleryId(g.id); reset(); }}
-              className={`relative rounded-md overflow-hidden border-2 aspect-[3/2] transition-all
+              className={`relative rounded-md overflow-hidden border-2 aspect-[5/2] transition-all
                 ${galleryId === g.id ? 'border-amber-400 shadow shadow-amber-500/15' : 'border-slate-700 hover:border-slate-500'}`}
             >
               <img src={g.src} alt="" className="w-full h-full object-cover"/>
             </button>
           ))}
-        </div>
-      </Card>
-
-      {/* Play / Replay strip — moved up so Play, ViT-vs-Swin, and the scans
-          all sit on the same screen. Patch size + reset are kept inline. */}
-      <Card className="p-2">
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2 items-end">
-          <div className="flex gap-2">
-            <button
-              onClick={() => { if (progress >= 1) setProgress(0); setPlaying(p => !p); }}
-              className="px-3 py-1.5 rounded-md bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-200 flex items-center gap-1.5 text-sm font-medium transition-all"
-            >
-              {playing ? <Pause size={13}/> : <Play size={13}/>}
-              {playing ? 'Pause' : (progress >= 1 ? 'Replay' : 'Play')}
-            </button>
-            <button
-              onClick={reset}
-              className="px-2.5 py-1.5 rounded-md bg-slate-800/60 hover:bg-slate-800 border border-slate-700 text-slate-300 transition-all"
-              title="Reset"
-            >
-              <RotateCcw size={13}/>
-            </button>
-          </div>
-          <Slider
-            label="Progress"
-            value={Math.round(progress * 100)}
-            min={0} max={100} suffix="%"
-            onChange={v => { setPlaying(false); setProgress(v / 100); }}
-          />
-          <Slider
-            label="Speed"
-            value={speed}
-            options={['Slow', 'Medium', 'Fast']}
-            onChange={setSpeed}
-          />
-          <div>
-            <div className="flex items-baseline justify-between mb-1">
-              <label className="text-[11px] font-mono text-slate-400 uppercase tracking-wider">Patch (px)</label>
-              <span className="font-mono text-amber-300 text-sm">{patchSize}</span>
-            </div>
-            <div className="flex gap-1 items-stretch">
-              {[48, 64, 72, 90, 120].map(opt => (
-                <button
-                  key={opt}
-                  onClick={() => { setPatchSize(opt); reset(); }}
-                  className={`flex-1 px-1.5 py-1 rounded text-xs font-mono border transition-all
-                    ${patchSize === opt
-                      ? 'bg-amber-500/20 border-amber-500/50 text-amber-200'
-                      : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-600'}`}
-                >
-                  {opt}
-                </button>
-              ))}
-              <input
-                type="number"
-                min={8}
-                max={120}
-                step={1}
-                value={patchSize}
-                onChange={e => {
-                  const v = Math.max(8, Math.min(120, Number(e.target.value) || 8));
-                  setPatchSize(v);
-                  reset();
-                }}
-                className="w-12 px-1.5 py-1 rounded text-xs font-mono bg-slate-900 border border-slate-700 text-amber-200 focus:border-amber-500 focus:outline-none"
-                aria-label="Custom patch size"
-              />
-            </div>
-          </div>
         </div>
       </Card>
 
@@ -5153,43 +5084,110 @@ function LiveDemoTab() {
         </Card>
       </div>
 
-      {/* ViT vs Swin · live FLOPs + time + $ that animate with the scan. */}
-      <Card className="p-3">
-        <div className="flex items-baseline justify-between mb-2 flex-wrap gap-2">
-          <div className="flex items-center gap-1.5">
-            <Tag color="rose">ViT vs Swin</Tag>
-            <span className="text-[12px] text-slate-200">FLOPs · time · $ — rises as the cat is scanned</span>
+      {/* FLOPs + Memory side by side — both grow with the scan's progress. */}
+      <div className="grid lg:grid-cols-2 gap-3">
+        <Card className="p-3">
+          <div className="flex items-baseline justify-between mb-2 flex-wrap gap-1">
+            <div className="flex items-center gap-1.5">
+              <Tag color="rose">ViT vs Swin</Tag>
+              <span className="text-[12px] text-slate-200">FLOPs · time · $</span>
+            </div>
+            <span className="text-[10px] font-mono text-slate-500">
+              hit Play → both lines climb
+            </span>
           </div>
-          <span className="text-[10px] font-mono text-slate-500">
-            hit Play / Replay → both lines climb · drag resolution to set the ceiling
-          </span>
-        </div>
-        <FlopsCostCard progress={progress} />
-      </Card>
+          <FlopsCostCard progress={progress} />
+        </Card>
 
-      {/* Memory rises as the scan plays — ViT's attention matrix balloons
-          quadratically, Swin's stays linear. Driven by the same progress
-          state as the scans, so hitting Play / Replay makes both lines
-          climb in real time. */}
-      <Card className="p-3">
-        <div className="flex items-baseline justify-between mb-2 flex-wrap gap-2">
-          <div className="flex items-center gap-1.5">
-            <Tag color="rose">Memory</Tag>
-            <span className="text-[12px] text-slate-200">Attention scores in memory · rises with replay</span>
+        <Card className="p-3">
+          <div className="flex items-baseline justify-between mb-2 flex-wrap gap-1">
+            <div className="flex items-center gap-1.5">
+              <Tag color="rose">Memory</Tag>
+              <span className="text-[12px] text-slate-200">Attention scores stored</span>
+            </div>
+            <span className="text-[10px] font-mono text-slate-500">
+              ViT climbs {Math.max(1, Math.round(SCAN_N / (SCAN_M * SCAN_M)))}× steeper
+            </span>
           </div>
-          <span className="text-[10px] font-mono text-slate-500">
-            ViT climbs {Math.max(1, Math.round(SCAN_N / (SCAN_M * SCAN_M)))}× steeper · Swin plateaus early
-          </span>
+          <StorageRiseChart
+            progress={progress}
+            vitTotal={vitTotalOps}
+            swinTotal={swinTotalOps}
+            vitOps={vitOpsCount}
+            swinOps={swinOpsCount}
+            N={SCAN_N}
+            M={SCAN_M}
+          />
+        </Card>
+      </div>
+
+      {/* Controls strip — sits behind (below) the FLOPs+Memory row so the
+          critical four (scans, FLOPs, Memory, Play) all share one screen. */}
+      <Card className="p-2">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2 items-end">
+          <div className="flex gap-2">
+            <button
+              onClick={() => { if (progress >= 1) setProgress(0); setPlaying(p => !p); }}
+              className="px-3 py-1.5 rounded-md bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-200 flex items-center gap-1.5 text-sm font-medium transition-all"
+            >
+              {playing ? <Pause size={13}/> : <Play size={13}/>}
+              {playing ? 'Pause' : (progress >= 1 ? 'Replay' : 'Play')}
+            </button>
+            <button
+              onClick={reset}
+              className="px-2.5 py-1.5 rounded-md bg-slate-800/60 hover:bg-slate-800 border border-slate-700 text-slate-300 transition-all"
+              title="Reset"
+            >
+              <RotateCcw size={13}/>
+            </button>
+          </div>
+          <Slider
+            label="Progress"
+            value={Math.round(progress * 100)}
+            min={0} max={100} suffix="%"
+            onChange={v => { setPlaying(false); setProgress(v / 100); }}
+          />
+          <Slider
+            label="Speed"
+            value={speed}
+            options={['Slow', 'Medium', 'Fast']}
+            onChange={setSpeed}
+          />
+          <div>
+            <div className="flex items-baseline justify-between mb-1">
+              <label className="text-[11px] font-mono text-slate-400 uppercase tracking-wider">Patch (px)</label>
+              <span className="font-mono text-amber-300 text-sm">{patchSize}</span>
+            </div>
+            <div className="flex gap-1 items-stretch">
+              {[48, 64, 72, 90, 120].map(opt => (
+                <button
+                  key={opt}
+                  onClick={() => { setPatchSize(opt); reset(); }}
+                  className={`flex-1 px-1.5 py-1 rounded text-xs font-mono border transition-all
+                    ${patchSize === opt
+                      ? 'bg-amber-500/20 border-amber-500/50 text-amber-200'
+                      : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-600'}`}
+                >
+                  {opt}
+                </button>
+              ))}
+              <input
+                type="number"
+                min={8}
+                max={120}
+                step={1}
+                value={patchSize}
+                onChange={e => {
+                  const v = Math.max(8, Math.min(120, Number(e.target.value) || 8));
+                  setPatchSize(v);
+                  reset();
+                }}
+                className="w-12 px-1.5 py-1 rounded text-xs font-mono bg-slate-900 border border-slate-700 text-amber-200 focus:border-amber-500 focus:outline-none"
+                aria-label="Custom patch size"
+              />
+            </div>
+          </div>
         </div>
-        <StorageRiseChart
-          progress={progress}
-          vitTotal={vitTotalOps}
-          swinTotal={swinTotalOps}
-          vitOps={vitOpsCount}
-          swinOps={swinOpsCount}
-          N={SCAN_N}
-          M={SCAN_M}
-        />
       </Card>
 
       {/* ----- Below-the-fold deep-dive cards (scroll for these) ----- */}
@@ -5245,8 +5243,8 @@ function LiveDemoTab() {
    so Swin plateaus once its (much smaller) total is reached, while
    ViT keeps climbing all the way to the right edge of the chart. */
 function StorageRiseChart({ progress, vitTotal, swinTotal, vitOps, swinOps, N, M }) {
-  const W = 640, H = 170;
-  const PAD_L = 56, PAD_R = 14, PAD_T = 10, PAD_B = 26;
+  const W = 640, H = 110;
+  const PAD_L = 56, PAD_R = 12, PAD_T = 6, PAD_B = 22;
   const innerW = W - PAD_L - PAD_R;
   const innerH = H - PAD_T - PAD_B;
   const SCORE_BYTES = 4;
@@ -5331,11 +5329,8 @@ function StorageRiseChart({ progress, vitTotal, swinTotal, vitOps, swinOps, N, M
         <text x={(PAD_L + W - PAD_R) / 2} y={H - 8} fontSize="10" textAnchor="middle" fill="#64748b" fontFamily="monospace">progress →</text>
         <text x={W - PAD_R} y={H - 8} fontSize="10" textAnchor="end" fill="#64748b" fontFamily="monospace">100%</text>
       </svg>
-      <p className="text-[10px] text-slate-400 mt-2 leading-snug">
-        Each attention score is a 4-byte fp32 cell. ViT keeps an <span className="text-amber-300">N×N</span> matrix
-        ({N}² = {(N * N).toLocaleString()} scores), Swin only stores within each <span className="text-teal-300">M×M</span> window
-        ({N}·{M * M} = {(N * M * M).toLocaleString()} scores). Hit Play / Replay — both lines rise, but Swin plateaus early
-        while ViT keeps climbing.
+      <p className="text-[10px] text-slate-400 mt-1 leading-snug">
+        4 B per fp32 score · ViT stores N×N = {(N * N).toLocaleString()} · Swin only stores N·M² = {(N * M * M).toLocaleString()}.
       </p>
     </div>
   );
