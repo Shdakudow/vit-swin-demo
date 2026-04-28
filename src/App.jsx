@@ -32,6 +32,29 @@ const TeXBlock = ({ children }) => (
   <div className="my-1" dangerouslySetInnerHTML={{ __html: renderTeX(children, true) }} />
 );
 
+/* renderWithMath — splits a plain string on $...$ delimiters and renders the
+   math segments via KaTeX. Lets us write QUESTION text / option labels /
+   explanations in plain JS strings while still getting proper LaTeX rendering
+   for the inline math fragments. */
+function renderWithMath(text) {
+  if (text == null) return null;
+  if (typeof text !== 'string') return text;
+  const parts = text.split(/(\$[^$]+\$)/g);
+  return parts.map((part, i) => {
+    if (part.length > 2 && part.startsWith('$') && part.endsWith('$')) {
+      const math = part.slice(1, -1);
+      return (
+        <span
+          key={i}
+          className="inline-block align-middle"
+          dangerouslySetInnerHTML={{ __html: renderTeX(math, false) }}
+        />
+      );
+    }
+    return <React.Fragment key={i}>{part}</React.Fragment>;
+  });
+}
+
 /* =========================================================
    Tiny linalg helpers (deterministic, seeded).
    Used to drive *real* attention-style computations so the
@@ -4850,13 +4873,13 @@ const QUESTIONS = [
     question: 'Why does ViT split an image into patches instead of feeding individual pixels to the transformer?',
     hints: [
       'Think about what kind of input a transformer naturally consumes — and how big it can practically be.',
-      'A 224×224 image has 50,176 pixels. Self-attention is O(N²), so attending pixel-to-pixel would mean a 50k×50k score matrix per layer.',
+      'A $224 \\times 224$ image has 50,176 pixels. Self-attention is $O(N^2)$, so attending pixel-to-pixel would mean a $50{,}000 \\times 50{,}000$ score matrix per layer.',
     ],
     options: [
       { text: 'Patches make image data fit in GPU memory by compressing it.', correct: false,
         explanation: 'Patches don\'t compress information — they reshape it. Each patch is still a flat vector of pixel values, projected linearly into a token embedding.' },
       { text: 'Transformers consume sequences of tokens, and patches turn the image into a manageably short sequence.', correct: true,
-        explanation: 'Right. ViT treats the image as N = (H·W)/P² patch-tokens. With P=16 on a 224² image you get 196 tokens — small enough that O(N²) attention is feasible.' },
+        explanation: 'Right. ViT treats the image as $N = (H \\cdot W)/P^2$ patch-tokens. With $P=16$ on a $224^2$ image you get 196 tokens — small enough that $O(N^2)$ attention is feasible.' },
       { text: 'CNNs need patches to compute convolutions efficiently.', correct: false,
         explanation: 'CNNs don\'t use patch tokens — they slide kernels over the full image. Patching is specific to transformer-based vision models.' },
       { text: 'The softmax in attention requires a fixed input length of 196.', correct: false,
@@ -4886,17 +4909,17 @@ const QUESTIONS = [
     question: 'What is the asymptotic compute cost of full self-attention over N tokens with embedding dimension d?',
     hints: [
       'Each token computes a similarity score against every other token.',
-      'You build an N×N matrix of scores, then do a softmax and weighted sum.',
+      'You build an $N \\times N$ matrix of scores, then do a softmax and weighted sum.',
     ],
     options: [
-      { text: 'O(N · d)', correct: false,
-        explanation: 'That\'s the cost of a single projection (e.g. computing one token\'s Q vector), not of full attention.' },
-      { text: 'O(N · log N · d)', correct: false,
-        explanation: 'Sub-quadratic costs like this come up in efficient/sparse attention variants, but standard self-attention is fully quadratic in N.' },
-      { text: 'O(N² · d)', correct: true,
-        explanation: 'Computing the score matrix QKᵀ is O(N²·d), and the weighted sum AV is also O(N²·d). This quadratic cost is exactly what makes high-resolution images expensive — and what Swin sidesteps with windows.' },
-      { text: 'O(d²)', correct: false,
-        explanation: 'O(d²) is the cost of multiplying a single token by a d×d projection matrix — a per-token cost, not the full attention cost over all tokens.' },
+      { text: '$O(N \\cdot d)$', correct: false,
+        explanation: 'That\'s the cost of a single projection (e.g. computing one token\'s $Q$ vector), not of full attention.' },
+      { text: '$O(N \\log N \\cdot d)$', correct: false,
+        explanation: 'Sub-quadratic costs like this come up in efficient/sparse attention variants, but standard self-attention is fully quadratic in $N$.' },
+      { text: '$O(N^2 \\cdot d)$', correct: true,
+        explanation: 'Computing the score matrix $Q K^{\\top}$ is $O(N^2 \\cdot d)$, and the weighted sum $A V$ is also $O(N^2 \\cdot d)$. This quadratic cost is exactly what makes high-resolution images expensive — and what Swin sidesteps with windows.' },
+      { text: '$O(d^2)$', correct: false,
+        explanation: '$O(d^2)$ is the cost of multiplying a single token by a $d \\times d$ projection matrix — a per-token cost, not the full attention cost over all tokens.' },
     ],
   },
   {
@@ -4910,7 +4933,7 @@ const QUESTIONS = [
       { text: 'Self-attention is permutation-invariant: it produces the same output for any reordering of the inputs.', correct: true,
         explanation: 'Right. Attention only depends on pairwise affinities, not on input order. Position embeddings break that symmetry by injecting "where" each token came from.' },
       { text: 'Different patches have different sizes, so positions vary.', correct: false,
-        explanation: 'Patches are uniform in size (e.g. 16×16). Position embeddings exist regardless of whether patch sizes vary.' },
+        explanation: 'Patches are uniform in size (e.g. $16 \\times 16$). Position embeddings exist regardless of whether patch sizes vary.' },
       { text: 'They make the softmax numerically stable.', correct: false,
         explanation: 'Numerical stability of softmax is handled by subtracting the max logit. Position embeddings serve a structural, not numerical, purpose.' },
       { text: 'They encode the class label at training time.', correct: false,
@@ -4928,7 +4951,7 @@ const QUESTIONS = [
       { text: 'It uses fewer attention heads.', correct: false,
         explanation: 'Head count doesn\'t change asymptotic cost. Both ViT and Swin typically use multi-head attention with similar head counts.' },
       { text: 'It restricts attention to local non-overlapping windows of patches.', correct: true,
-        explanation: 'Yes. Within a window of M×M patches, attention is O(M²) per window. Total cost is *linear* in N (number of patches) instead of quadratic — the headline result of the Swin paper.' },
+        explanation: 'Yes. Within a window of $M \\times M$ patches, attention is $O(M^2)$ per window. Total cost is *linear* in $N$ (number of patches) instead of quadratic — the headline result of the Swin paper.' },
       { text: 'It quantizes weights to int8.', correct: false,
         explanation: 'Quantization is an orthogonal optimization, not part of Swin\'s core design.' },
       { text: 'It skips MLP layers between attention blocks.', correct: false,
@@ -4948,7 +4971,7 @@ const QUESTIONS = [
       { text: 'Shifting prevents overfitting by acting as a regularizer.', correct: false,
         explanation: 'Shifting isn\'t a regularization technique — it\'s a structural mechanism for cross-window communication.' },
       { text: 'It allows information to flow across window boundaries between layers.', correct: true,
-        explanation: 'Right. In layer ℓ a patch sees patches in its window. In layer ℓ+1 the windows are shifted by half a window, so what used to be a boundary is now interior — patches that were separated can now attend to each other.' },
+        explanation: 'Right. In layer $\\ell$ a patch sees patches in its window. In layer $\\ell+1$ the windows are shifted by half a window, so what used to be a boundary is now interior — patches that were separated can now attend to each other.' },
       { text: 'It allows arbitrary input resolutions.', correct: false,
         explanation: 'Arbitrary resolutions are handled by patch-merging and padding, not by window shifting.' },
     ],
@@ -4962,9 +4985,9 @@ const QUESTIONS = [
     ],
     options: [
       { text: 'Lower asymptotic cost than single-head attention.', correct: false,
-        explanation: 'Total cost is similar; the d-dim space is just split across heads. Multi-head is about expressivity, not speed.' },
+        explanation: 'Total cost is similar; the $d$-dim space is just split across heads. Multi-head is about expressivity, not speed.' },
       { text: 'Multiple parallel attention "subspaces", each learning a different pattern of relationships.', correct: true,
-        explanation: 'Yes. Each head projects Q/K/V into a smaller d/h-dim space and computes its own attention map. The outputs are concatenated, letting the layer attend to several relational structures at once.' },
+        explanation: 'Yes. Each head projects $Q/K/V$ into a smaller $d/h$-dim space and computes its own attention map. The outputs are concatenated, letting the layer attend to several relational structures at once.' },
       { text: 'A learned hierarchy of resolutions.', correct: false,
         explanation: 'Hierarchy across resolutions is what Swin\'s patch-merging provides, not what multi-head attention provides.' },
       { text: 'Built-in positional information.', correct: false,
@@ -4981,8 +5004,8 @@ const QUESTIONS = [
     options: [
       { text: 'Strided convolutions between stages.', correct: false,
         explanation: 'Swin is convolution-free in its main path. Down-sampling is done by patch-merging, not strided conv.' },
-      { text: 'A learned 2×2 patch-merging layer that combines four neighboring patches into one.', correct: true,
-        explanation: 'Yes. At each stage boundary, every 2×2 group of patches is concatenated (4·C channels) then linearly projected back to 2C channels. Spatial resolution halves; channels double — exactly like a CNN feature pyramid.' },
+      { text: 'A learned $2 \\times 2$ patch-merging layer that combines four neighboring patches into one.', correct: true,
+        explanation: 'Yes. At each stage boundary, every $2 \\times 2$ group of patches is concatenated ($4 \\cdot C$ channels) then linearly projected back to $2C$ channels. Spatial resolution halves; channels double — exactly like a CNN feature pyramid.' },
       { text: 'By dropping every other patch.', correct: false,
         explanation: 'Dropping patches would lose information. Patch-merging *combines* them so no information is discarded.' },
       { text: 'By resizing the input image between stages.', correct: false,
@@ -4999,30 +5022,30 @@ const QUESTIONS = [
     options: [
       { text: 'Smaller — patches are fixed-size and local.', correct: false,
         explanation: 'A patch *embedding* is local, but attention then mixes information across all patches in one shot.' },
-      { text: 'Roughly the same as a CNN\'s 3×3 kernel receptive field.', correct: false,
-        explanation: 'A 3×3 kernel covers 9 pixels. ViT\'s first attention layer can mix information from *every* patch.' },
+      { text: 'Roughly the same as a CNN\'s $3 \\times 3$ kernel receptive field.', correct: false,
+        explanation: 'A $3 \\times 3$ kernel covers 9 pixels. ViT\'s first attention layer can mix information from *every* patch.' },
       { text: 'Global — every patch can attend to every other patch in a single layer.', correct: true,
-        explanation: 'Right. That\'s the headline difference. CNNs build up the receptive field gradually through stacked convolutions; ViT has it from layer 1 — at the cost of O(N²) attention.' },
+        explanation: 'Right. That\'s the headline difference. CNNs build up the receptive field gradually through stacked convolutions; ViT has it from layer 1 — at the cost of $O(N^2)$ attention.' },
       { text: 'Always zero in the first layer; only later layers see other patches.', correct: false,
         explanation: 'Self-attention mixes tokens at every layer, including the first. The patch-embedding step before it is local, but attention is global.' },
     ],
   },
   {
     id: 'q10',
-    question: 'You have a 224×224 image with full self-attention and patch size 16. If you increase resolution to 448×448 keeping patch size at 16, by what factor does the cost of one attention layer grow?',
+    question: 'You have a $224 \\times 224$ image with full self-attention and patch size 16. If you increase resolution to $448 \\times 448$ keeping patch size at 16, by what factor does the cost of one attention layer grow?',
     hints: [
       'First figure out how many patches you have at each resolution.',
-      'Self-attention is O(N²). Quadrupling N quadruples N — and squares the cost.',
+      'Self-attention is $O(N^2)$. Quadrupling $N$ quadruples $N$ — and squares the cost.',
     ],
     options: [
-      { text: '2×', correct: false,
-        explanation: 'Doubling resolution doesn\'t just double the patches — it quadruples them (4× in 2D).' },
-      { text: '4×', correct: false,
-        explanation: '4× would be the right answer if attention were O(N). It\'s not — it\'s O(N²).' },
-      { text: '16×', correct: true,
-        explanation: 'Right. 224/16 = 14 → 196 patches. 448/16 = 28 → 784 patches (4× more). Self-attention is O(N²), so 4² = 16× more compute. This is exactly why Swin\'s linear-cost windowed attention matters at high resolutions.' },
-      { text: '256×', correct: false,
-        explanation: 'Too high. You\'d need patches to grow 16× (not 4×) for 16² = 256× cost. Here patches grow only 4×.' },
+      { text: '$2\\times$', correct: false,
+        explanation: 'Doubling resolution doesn\'t just double the patches — it quadruples them ($4\\times$ in 2D).' },
+      { text: '$4\\times$', correct: false,
+        explanation: '$4\\times$ would be the right answer if attention were $O(N)$. It\'s not — it\'s $O(N^2)$.' },
+      { text: '$16\\times$', correct: true,
+        explanation: 'Right. $224/16 = 14 \\Rightarrow 196$ patches. $448/16 = 28 \\Rightarrow 784$ patches ($4\\times$ more). Self-attention is $O(N^2)$, so $4^2 = 16\\times$ more compute. This is exactly why Swin\'s linear-cost windowed attention matters at high resolutions.' },
+      { text: '$256\\times$', correct: false,
+        explanation: 'Too high. You\'d need patches to grow $16\\times$ (not $4\\times$) for $16^2 = 256\\times$ cost. Here patches grow only $4\\times$.' },
     ],
   },
 ];
@@ -5040,7 +5063,7 @@ function Question({ q, index }) {
     <Card className="p-5">
       <div className="flex items-baseline gap-3 mb-4">
         <span className="font-mono text-xs text-amber-300/80 shrink-0">Q{index}</span>
-        <h3 className="font-serif text-lg text-slate-100 leading-snug">{q.question}</h3>
+        <h3 className="font-serif text-lg text-slate-100 leading-snug">{renderWithMath(q.question)}</h3>
       </div>
 
       <div className="flex flex-wrap gap-2 mb-3">
@@ -5061,12 +5084,12 @@ function Question({ q, index }) {
       </div>
       {hint1 && (
         <div className="mb-2 px-3 py-2 rounded bg-amber-500/[0.07] border border-amber-500/25 text-[13px] text-amber-100/90 leading-relaxed">
-          {q.hints[0]}
+          {renderWithMath(q.hints[0])}
         </div>
       )}
       {hint2 && (
         <div className="mb-3 px-3 py-2 rounded bg-amber-500/[0.12] border border-amber-500/40 text-[13px] text-amber-100/95 leading-relaxed">
-          {q.hints[1]}
+          {renderWithMath(q.hints[1])}
         </div>
       )}
 
@@ -5098,13 +5121,13 @@ function Question({ q, index }) {
                 }`}>
                   {letter}
                 </span>
-                <span className="text-sm flex-1">{opt.text}</span>
+                <span className="text-sm flex-1">{renderWithMath(opt.text)}</span>
                 {checked && i === correctIdx && <Check size={14} className="text-emerald-300 mt-0.5 shrink-0"/>}
                 {checked && i === selected && i !== correctIdx && <X size={14} className="text-rose-300 mt-0.5 shrink-0"/>}
               </div>
               {checked && (
                 <p className="mt-2 text-[12px] text-slate-300/80 leading-relaxed pl-7">
-                  {opt.explanation}
+                  {renderWithMath(opt.explanation)}
                 </p>
               )}
             </button>
