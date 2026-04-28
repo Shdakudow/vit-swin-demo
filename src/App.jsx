@@ -191,15 +191,16 @@ function drawTestImage(ctx, size, variant = 0) {
 }
 
 /* Pair-demo image: deliberately laid out so the Self-Attention demo
-   has obvious "answers". Two pairs of objects on a 5×5 grid:
-       red square  ┐                          ┌ blue circle
-                   │                          │
-                   │   (background)           │
-                   │                          │
-       blue circle ┘                          └ red square
-   Diagonal twins share color — a query patch on a red square should
-   attend strongly to the OTHER red square, and similarly for the
-   blue circles. Designed to align with patchSize=48 / SIZE=240. */
+   has obvious "answers". Three pairs of distinct shape+colour combos:
+       red square  ┐    yellow tri (N)     ┌ blue circle
+                   │                       │
+                   │     (background)      │
+                   │                       │
+       blue circle ┘    yellow tri (S)     └ red square
+   Each shape has a colour-matched twin elsewhere — a query patch on
+   a red square should attend strongly to the OTHER red square, and
+   similarly for the blue circles and yellow triangles. Designed to
+   align with patchSize=48 / SIZE=240. */
 function drawPairsDemoImage(ctx, size) {
   // Slightly lighter background so coloured shapes pop more.
   const bg = ctx.createLinearGradient(0, 0, 0, size);
@@ -1761,7 +1762,7 @@ function AttentionTab() {
           <span className="text-[10px] font-mono tracking-[0.2em] text-amber-400/80 uppercase">How to use</span>
           <span><span className="font-mono text-amber-300">1.</span> Click any patch on the image (sets the <em>query</em>).</span>
           <span><span className="font-mono text-amber-300">2.</span> Step <strong>1 → 5</strong> below to walk the math.</span>
-          <span><span className="font-mono text-amber-300">3.</span> The image has matched red squares + blue circles — the model should find the pairs.</span>
+          <span><span className="font-mono text-amber-300">3.</span> The image has three matched pairs — red squares, blue circles, yellow triangles — the model should find the twin of each.</span>
         </div>
       </Card>
 
@@ -1811,7 +1812,7 @@ function AttentionTab() {
             </div>
             <div className="mt-2 text-[12px] text-slate-300 leading-snug min-h-[2.2em]">
               {selectedPatch === null
-                ? <span className="text-amber-200/80">Pick a patch — try a red square or blue circle for the cleanest result.</span>
+                ? <span className="text-amber-200/80">Pick a patch — try a red square, blue circle, or yellow triangle for the cleanest result.</span>
                 : step === 0
                   ? <>Step 1 · <span className="text-amber-300">Project</span> — every patch produces Q, K, V vectors (matrices shown right).</>
                   : step === 1
@@ -1820,7 +1821,7 @@ function AttentionTab() {
                       ? <>Step 3 · <span className="text-amber-300">Softmax</span> — rows sum to 100%. Peaks = where attention concentrates.</>
                       : step === 3
                         ? <>Step 4 · <span className="text-amber-300">Aggregate</span> — top-5 patches stay bright; output is a blend of <em>their</em> values.</>
-                        : <>Step 5 · <span className="text-amber-300">Inspect</span> — try other patches. Should pair red↔red, blue↔blue.</>}
+                        : <>Step 5 · <span className="text-amber-300">Inspect</span> — try other patches. Should pair red↔red, blue↔blue, yellow↔yellow.</>}
             </div>
           </Card>
 
@@ -1831,7 +1832,7 @@ function AttentionTab() {
               </div>
               <TopAttended attn={attn} N={N} query={selectedPatch} grid={grid} patchSize={patchSize} />
               <div className="text-[11px] text-slate-400 italic mt-2 leading-snug">
-                Query on a red square should see the other red square near the top — that's "patches that look alike attend to each other".
+                Query on any colour (red square, blue circle, yellow triangle) should see its twin near the top — that's "patches that look alike attend to each other".
               </div>
             </Card>
           )}
@@ -1854,7 +1855,7 @@ function AttentionTab() {
             <div className="flex items-baseline justify-between gap-3 mb-2 flex-wrap">
               <div className="text-[13px] text-slate-200">
                 {step <= 0 && <>Attention matrix <TeX>{String.raw`A \in \mathbb{R}^{N \times N}`}</TeX> · not yet computed</>}
-                {step === 1 && <>Raw scores <TeX>{String.raw`Q K^\top / \sqrt{d}`}</TeX> · signed, pre-softmax</>}
+                {step === 1 && <>Raw scores <TeX>{String.raw`Q K^\top / \sqrt{d_k}`}</TeX> · signed, pre-softmax</>}
                 {step === 2 && <>Softmax weights <Eq>A</Eq> · rows sum to 100%</>}
                 {step === 3 && <>Aggregate · top-3 contributors per row highlighted</>}
                 {step === 4 && <>Inspect · click a row to make it the query</>}
@@ -2507,7 +2508,7 @@ function PipelineVisual({ step }) {
             <div className="text-[10px] font-mono text-slate-500 text-center">…</div>
           </div>
           <div className="font-mono text-[11px] text-amber-300 mt-2">N × (P²·3)</div>
-          <div className="font-mono text-[10px] text-slate-500">196 × 768 (flattened)</div>
+          <div className="font-mono text-[10px] text-slate-500">196 × (16²·3) flattened</div>
         </div>
       </div>
     );
@@ -2522,7 +2523,7 @@ function PipelineVisual({ step }) {
             {Array.from({ length: STACK_N }).map((_, i) => <Bar key={i} hue={i * 35} w="w-20"/>)}
           </div>
           <div className="font-mono text-[11px] text-slate-400 mt-2">N × (P²·3)</div>
-          <div className="font-mono text-[10px] text-slate-500">flat patches</div>
+          <div className="font-mono text-[10px] text-slate-500">196 × (16²·3) flat patches</div>
         </div>
         <div className="text-center">
           <div className="text-amber-400 font-mono text-xl">→</div>
@@ -2534,7 +2535,7 @@ function PipelineVisual({ step }) {
             {Array.from({ length: STACK_N }).map((_, i) => <Bar key={i} hue={i * 50 + 45} w="w-24"/>)}
           </div>
           <div className="font-mono text-[11px] text-amber-300 mt-2">N × D</div>
-          <div className="font-mono text-[10px] text-slate-500">196 × 768</div>
+          <div className="font-mono text-[10px] text-slate-500">196 × 768 (D = embed dim)</div>
         </div>
       </div>
     );
@@ -4924,8 +4925,11 @@ function LiveDemoTab() {
   // Live ops counters — keep the *true* op ratio so the numbers reflect
   // the actual work difference (the ratio shown in the headers is 6×+
   // even though the visual race only shows ~2× faster).
-  const vitTotalOps = SCAN_N * (SCAN_N - 1);
-  const swinTotalOps = SCAN_N * (SCAN_M * SCAN_M - 1);
+  // Each query attends to every key including itself — so the full
+  // attention matrix has N×N (ViT) and N·M² (Swin) scores. Counting the
+  // self-attention diagonal keeps the code aligned with the chart caption.
+  const vitTotalOps = SCAN_N * SCAN_N;
+  const swinTotalOps = SCAN_N * (SCAN_M * SCAN_M);
   const absOps = Math.floor(progress * vitTotalOps);
   const vitOpsCount = Math.min(vitTotalOps, absOps);
   const swinOpsCount = Math.min(swinTotalOps, absOps);
@@ -5561,7 +5565,7 @@ const QUESTIONS = [
       { text: 'It uses fewer attention heads.', correct: false,
         explanation: 'Head count doesn\'t change asymptotic cost. Both ViT and Swin typically use multi-head attention with similar head counts.' },
       { text: 'It restricts attention to local non-overlapping windows of patches.', correct: true,
-        explanation: 'Yes. Within a window of $M \\times M$ patches, attention is $O(M^2)$ per window. Total cost is *linear* in $N$ (number of patches) instead of quadratic — the headline result of the Swin paper.' },
+        explanation: 'Yes. Each window has $M^2$ tokens, so attention inside one window costs $O(M^4 \\cdot d)$. With $N / M^2$ windows total, the cost is $O(N \\cdot M^2 \\cdot d)$ — *linear* in $N$ instead of quadratic. That is the headline result of the Swin paper.' },
       { text: 'It quantizes weights to int8.', correct: false,
         explanation: 'Quantization is an orthogonal optimization, not part of Swin\'s core design.' },
       { text: 'It skips MLP layers between attention blocks.', correct: false,
