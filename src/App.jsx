@@ -5079,8 +5079,10 @@ function LiveDemoTab() {
         </div>
       </Card>
 
-      {/* Three-column main row: ViT scan/matrix · Swin scan/matrix · per-class predictions */}
-      <div className="grid lg:grid-cols-3 gap-3">
+      {/* Main row: ViT scan / Swin scan / predictions. On iPad portrait
+          (md) we drop to 2-col and let the predictions card span both
+          columns underneath, keeping each scan canvas readable. */}
+      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
         <Card className="p-3">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-1.5">
@@ -5185,7 +5187,7 @@ function LiveDemoTab() {
             another optional row; here we render below the per-class card.
             Wrapping in a Fragment so the parent grid stays 3 cols. */}
 
-        <Card className="p-3">
+        <Card className="p-3 md:col-span-2 lg:col-span-1">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-1.5">
               <Brain size={14} className="text-amber-300"/>
@@ -5244,9 +5246,10 @@ function LiveDemoTab() {
       </div>
 
       {/* Controls strip — sits behind (below) the FLOPs+Memory row so the
-          critical four (scans, FLOPs, Memory, Play) all share one screen. */}
+          critical four (scans, FLOPs, Memory, Play) all share one screen.
+          Uses md:grid-cols-4 so iPad-portrait keeps the row on one line. */}
       <Card className="p-2">
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2 items-end">
+        <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-2 items-end">
           <div className="flex gap-2">
             <button
               onClick={() => { if (progress >= 1) setProgress(0); setPlaying(p => !p); }}
@@ -5285,7 +5288,7 @@ function LiveDemoTab() {
                 <button
                   key={opt}
                   onClick={() => { setPatchSize(opt); reset(); }}
-                  className={`flex-1 px-1.5 py-1 rounded text-xs font-mono border transition-all
+                  className={`flex-1 px-1.5 py-1.5 rounded text-xs font-mono border transition-all min-h-[34px]
                     ${patchSize === opt
                       ? 'bg-amber-500/20 border-amber-500/50 text-amber-200'
                       : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-600'}`}
@@ -5304,7 +5307,7 @@ function LiveDemoTab() {
                   setPatchSize(v);
                   reset();
                 }}
-                className="w-12 px-1.5 py-1 rounded text-xs font-mono bg-slate-900 border border-slate-700 text-amber-200 focus:border-amber-500 focus:outline-none"
+                className="w-12 px-1.5 py-1.5 rounded text-xs font-mono bg-slate-900 border border-slate-700 text-amber-200 focus:border-amber-500 focus:outline-none min-h-[34px]"
                 aria-label="Custom patch size"
               />
             </div>
@@ -6004,6 +6007,14 @@ export default function App() {
       <style>{`
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { scrollbar-width: none; }
+
+        /* Touch behaviour for tablets / phones. Removes the 300 ms
+           click delay on iOS Safari, suppresses the gray flash on
+           tap, and stops double-tap from zooming canvases that act
+           as pointers (scan grids, position simulator, etc.). */
+        * { -webkit-tap-highlight-color: transparent; }
+        button, canvas, [role="button"] { touch-action: manipulation; }
+        canvas { -webkit-touch-callout: none; user-select: none; }
 
         /* Font-size scaling for the A11y panel.  The root font-size
            change covers rem-based utilities (text-xs, text-sm, …) but
