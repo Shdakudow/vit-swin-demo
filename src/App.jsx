@@ -4728,36 +4728,40 @@ function ClassContribution({ image, attentionRows, gridN, preds, status, statusM
     setOcclProgress(0);
   }, [preds]);
 
-  // Whenever the user picks a class, fetch (or compute) its occlusion
-  // map. Once available it overrides the rollout heatmap for that
-  // class so each rank actually shows different evidence. The
-  // canceled flag is forwarded into computeOcclusionMap so switching
-  // class / image mid-compute aborts cleanly instead of running 49
-  // forward passes after the user has moved on.
-  useEffect(() => {
+  // Occlusion compute is now OPT-IN — no auto-trigger on class click,
+  // because each model forward pass blocks the main thread for ~150 ms
+  // and 16-25 of them in a row was making the page feel frozen / OOM
+  // on weaker devices. The user clicks the explicit "Compute evidence"
+  // button below the heatmap to start it for the currently-selected
+  // rank. The canceled flag is still forwarded so switching images
+  // mid-compute aborts cleanly.
+  const cancelComputeRef = useRef(false);
+  const startOcclusion = useCallback(() => {
     if (!requestOcclusion || !preds || preds.length === 0) return;
-    if (occlusionByClass[classIdx]) return; // cached
-    let canceled = false;
+    if (occlusionByClass[classIdx] || occlComputing) return;
+    cancelComputeRef.current = false;
     setOcclComputing(true);
     setOcclProgress(0);
     (async () => {
       try {
         const heat = await requestOcclusion(
           classIdx,
-          (p) => { if (!canceled) setOcclProgress(p); },
-          () => canceled,
+          (p) => { if (!cancelComputeRef.current) setOcclProgress(p); },
+          () => cancelComputeRef.current,
         );
-        if (canceled || !heat) return;
+        if (cancelComputeRef.current || !heat) return;
         setOcclusionByClass(prev => ({ ...prev, [classIdx]: heat }));
       } catch (err) {
         // eslint-disable-next-line no-console
         console.warn('[ClassContribution] occlusion compute failed:', err);
       } finally {
-        if (!canceled) setOcclComputing(false);
+        setOcclComputing(false);
       }
     })();
-    return () => { canceled = true; };
-  }, [classIdx, requestOcclusion, preds, occlusionByClass]);
+  }, [requestOcclusion, preds, classIdx, occlusionByClass, occlComputing]);
+
+  // Cancel any in-flight compute when the parent unmounts / image swaps.
+  useEffect(() => () => { cancelComputeRef.current = true; }, []);
 
   const activeOcclusion = occlusionByClass[classIdx] || null;
 
@@ -4809,6 +4813,19 @@ function ClassContribution({ image, attentionRows, gridN, preds, status, statusM
                   : status === 'inferring' ? 'running ViT-Base…'
                   : 'waiting for predictions'}
         </div>
+        {/* Explicit opt-in button to compute real per-class evidence.
+            Only shows when we have a model-ready prediction and no
+            cached map for the current rank. Auto-computing crashed the
+            page on weaker devices because each WASM forward pass
+            blocks the main thread for ~150 ms × 16 in a row. */}
+        {requestOcclusion && top5[classIdx] && !isOccl && !occlComputing && status === 'ready' && (
+          <button
+            onClick={startOcclusion}
+            className="mt-1 w-[180px] px-2 py-1.5 rounded-md bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-200 text-[11px] font-mono transition-all"
+          >
+            Compute evidence ({top5[classIdx].label})
+          </button>
+        )}
       </div>
 
       <div className="flex-1 min-w-[180px] space-y-1">
@@ -5531,7 +5548,7 @@ function LiveDemoTab() {
       baseTensor: st.baseTensor,
       classIdx: classModelIdx,
       baselineProb,
-      blocksSide: 5,    // 25 forward passes — enough resolution, ≈4-6 s on a fast laptop
+      blocksSide: 4,    // 16 forward passes — coarse but ≈2-3 s on a fast laptop, fits iPad Safari memory
       onProgress,
       isCanceled,
     });
