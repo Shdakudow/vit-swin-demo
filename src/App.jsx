@@ -4487,15 +4487,19 @@ function computeAttentionRollout(attentions) {
   return { data: patchAttn, gridSide };
 }
 
-/* computeOcclusionMap — runs the ViT model 7×7=49 times on a single
-   image, masking one block of the input tensor each time, and returns
-   the per-block drop in the target class's probability. The drop tells
-   us how much that block contributed to the prediction — real,
-   class-conditional evidence (no gradients needed).
+/* computeOcclusionMap — masks one block of the normalised input
+   tensor at a time, re-runs ViT-B/16, and records the drop in the
+   target class's probability. High drop ⇒ high importance for that
+   class. Real, class-conditional evidence with no gradient needed.
 
-   Operates in normalized tensor space so we don't re-run the
-   processor for each block; the cost is just 49 × forward pass. */
-async function computeOcclusionMap({ Tensor, model, baseTensor, classIdx, baselineProb, blocksSide = 7, onProgress }) {
+   Memory-conscious: we keep a single masked TypedArray and just
+   restore the previous block's pixels then zero the current block.
+   That avoids 49 fresh clones (≈30 MB of churn) which was crashing
+   tabs after a few clicks. We also yield to the browser between
+   iterations so the WASM heap can settle and the tab stays
+   responsive, and honour a cancellation token so switching images
+   mid-compute aborts the loop instead of running to completion. */
+async function computeOcclusionMap({ Tensor, model, baseTensor, classIdx, baselineProb, blocksSide = 5, onProgress, isCanceled }) {
   const dims = baseTensor.dims;        // [1, 3, 224, 224]
   const [, C, H, W] = dims;
   const blockH = H / blocksSide;
@@ -4505,23 +4509,49 @@ async function computeOcclusionMap({ Tensor, model, baseTensor, classIdx, baseli
 
   const baseData = baseTensor.data;
   const TypedArr = baseData.constructor;
+  const masked = new TypedArr(baseData);   // one allocation, reused
+  let prevRect = null;                     // last block we zeroed
+
+  // Tiny yield helper: lets the browser run paint / GC between iters.
+  const yieldToUI = () => new Promise(resolve => setTimeout(resolve, 0));
 
   for (let i = 0; i < total; i++) {
+    if (isCanceled && isCanceled()) return null;
+
     const br = Math.floor(i / blocksSide);
     const bc = i % blocksSide;
     const x0 = Math.floor(bc * blockW), x1 = Math.floor((bc + 1) * blockW);
     const y0 = Math.floor(br * blockH), y1 = Math.floor((br + 1) * blockH);
 
-    const masked = new TypedArr(baseData);
+    // Restore the previously-zeroed block to original values.
+    if (prevRect) {
+      const [px0, px1, py0, py1] = prevRect;
+      for (let c = 0; c < C; c++) {
+        for (let y = py0; y < py1; y++) {
+          const rowStart = c * H * W + y * W;
+          for (let x = px0; x < px1; x++) masked[rowStart + x] = baseData[rowStart + x];
+        }
+      }
+    }
+    // Zero the current block.
     for (let c = 0; c < C; c++) {
       for (let y = y0; y < y1; y++) {
         const rowStart = c * H * W + y * W;
         for (let x = x0; x < x1; x++) masked[rowStart + x] = 0;
       }
     }
+    prevRect = [x0, x1, y0, y1];
 
     const maskedTensor = new Tensor(baseTensor.type, masked, dims);
-    const result = await model({ pixel_values: maskedTensor });
+    let result;
+    try {
+      result = await model({ pixel_values: maskedTensor });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[occlusion] model call failed, aborting:', err);
+      return null;
+    }
+    if (isCanceled && isCanceled()) return null;
     const logits = result.logits.data;
 
     let mx = -Infinity;
@@ -4533,6 +4563,10 @@ async function computeOcclusionMap({ Tensor, model, baseTensor, classIdx, baseli
 
     out[i] = Math.max(0, baselineProb - maskedProb);
     if (onProgress) onProgress((i + 1) / total);
+
+    // Let the event loop run — keeps the page responsive and gives
+    // the WASM heap a chance to settle.
+    await yieldToUI();
   }
 
   return { data: out, gridSide: blocksSide };
@@ -4696,7 +4730,10 @@ function ClassContribution({ image, attentionRows, gridN, preds, status, statusM
 
   // Whenever the user picks a class, fetch (or compute) its occlusion
   // map. Once available it overrides the rollout heatmap for that
-  // class so each rank actually shows different evidence.
+  // class so each rank actually shows different evidence. The
+  // canceled flag is forwarded into computeOcclusionMap so switching
+  // class / image mid-compute aborts cleanly instead of running 49
+  // forward passes after the user has moved on.
   useEffect(() => {
     if (!requestOcclusion || !preds || preds.length === 0) return;
     if (occlusionByClass[classIdx]) return; // cached
@@ -4705,11 +4742,16 @@ function ClassContribution({ image, attentionRows, gridN, preds, status, statusM
     setOcclProgress(0);
     (async () => {
       try {
-        const heat = await requestOcclusion(classIdx, (p) => {
-          if (!canceled) setOcclProgress(p);
-        });
+        const heat = await requestOcclusion(
+          classIdx,
+          (p) => { if (!canceled) setOcclProgress(p); },
+          () => canceled,
+        );
         if (canceled || !heat) return;
         setOcclusionByClass(prev => ({ ...prev, [classIdx]: heat }));
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('[ClassContribution] occlusion compute failed:', err);
       } finally {
         if (!canceled) setOcclComputing(false);
       }
@@ -5474,9 +5516,10 @@ function LiveDemoTab() {
   }, [modelReady, imgSrc]);
 
   // Lazy occlusion compute exposed to ClassContribution: returns a
-  // cached Float32Array(49) of per-block importance for the requested
-  // top-5 rank, or kicks off compute if not cached.
-  const requestOcclusion = useCallback(async (rankIdx, onProgress) => {
+  // cached per-block importance map for the requested top-5 rank, or
+  // kicks off compute if not cached. Honours an optional isCanceled
+  // callback so switching images mid-compute aborts cleanly.
+  const requestOcclusion = useCallback(async (rankIdx, onProgress, isCanceled) => {
     const st = occlusionStateRef.current;
     if (!st || !st.baseTensor || !st.top5Idx) return null;
     if (st.maps[rankIdx]) return st.maps[rankIdx];
@@ -5488,10 +5531,11 @@ function LiveDemoTab() {
       baseTensor: st.baseTensor,
       classIdx: classModelIdx,
       baselineProb,
-      blocksSide: 7,
+      blocksSide: 5,    // 25 forward passes — enough resolution, ≈4-6 s on a fast laptop
       onProgress,
+      isCanceled,
     });
-    st.maps[rankIdx] = heat;
+    if (heat) st.maps[rankIdx] = heat;
     return heat;
   }, []);
 
