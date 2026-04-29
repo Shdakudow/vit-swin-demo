@@ -4404,6 +4404,145 @@ const CLASS_ANCHORS = [
   [0.75, 0.75],   // top-5: lower-right quadrant
 ];
 
+/* computeAttentionRollout — Abnar & Zuidema (2020).  Each layer's
+   attention is averaged across heads, the residual stream is folded
+   in by adding the identity, the row sums are renormalised to 1, and
+   the per-layer matrices are multiplied together.  The CLS row of the
+   final product is the per-patch attention used to render the heatmap.
+
+   Input shape per layer: tensor with .data Float32Array, .dims
+   [batch=1, heads, N+1, N+1].  Returns null if the tensor list is
+   empty or malformed.
+
+   Output: { data: Float32Array(N), gridSide: int }, with values
+   min-max normalised to [0, 1] for display. */
+function computeAttentionRollout(attentions) {
+  if (!Array.isArray(attentions) || attentions.length === 0) return null;
+  const first = attentions[0];
+  if (!first || !first.dims || first.dims.length !== 4) return null;
+  const numTokens = first.dims[2];           // 197
+  const numPatches = numTokens - 1;          // 196
+  const gridSide = Math.round(Math.sqrt(numPatches));
+  if (gridSide * gridSide !== numPatches) return null;
+
+  let rollout = new Float32Array(numTokens * numTokens);
+  for (let i = 0; i < numTokens; i++) rollout[i * numTokens + i] = 1;
+
+  const layerAvg = new Float32Array(numTokens * numTokens);
+
+  for (const tensor of attentions) {
+    if (!tensor || !tensor.data || !tensor.dims) return null;
+    const [, heads, rows, cols] = tensor.dims;
+    if (rows !== numTokens || cols !== numTokens) return null;
+    const data = tensor.data;
+
+    // Average across heads.
+    const headStride = rows * cols;
+    layerAvg.fill(0);
+    for (let h = 0; h < heads; h++) {
+      const base = h * headStride;
+      for (let i = 0; i < headStride; i++) layerAvg[i] += data[base + i];
+    }
+    for (let i = 0; i < headStride; i++) layerAvg[i] /= heads;
+
+    // Add identity (the residual stream contributes to the rollout).
+    for (let i = 0; i < numTokens; i++) layerAvg[i * numTokens + i] += 1;
+
+    // Re-normalise each row to sum to 1.
+    for (let i = 0; i < numTokens; i++) {
+      let rowSum = 0;
+      for (let j = 0; j < numTokens; j++) rowSum += layerAvg[i * numTokens + j];
+      if (rowSum > 0) {
+        for (let j = 0; j < numTokens; j++) layerAvg[i * numTokens + j] /= rowSum;
+      }
+    }
+
+    // rollout = layerAvg @ rollout
+    const next = new Float32Array(numTokens * numTokens);
+    for (let i = 0; i < numTokens; i++) {
+      for (let k = 0; k < numTokens; k++) {
+        const a = layerAvg[i * numTokens + k];
+        if (a === 0) continue;
+        for (let j = 0; j < numTokens; j++) {
+          next[i * numTokens + j] += a * rollout[k * numTokens + j];
+        }
+      }
+    }
+    rollout = next;
+  }
+
+  // Take the CLS row (index 0) and drop the CLS-self entry.
+  const patchAttn = new Float32Array(numPatches);
+  for (let j = 0; j < numPatches; j++) patchAttn[j] = rollout[j + 1];
+
+  // Min-max normalise for visualisation.
+  let mn = Infinity, mx = -Infinity;
+  for (let i = 0; i < numPatches; i++) {
+    if (patchAttn[i] < mn) mn = patchAttn[i];
+    if (patchAttn[i] > mx) mx = patchAttn[i];
+  }
+  const range = mx - mn || 1;
+  for (let i = 0; i < numPatches; i++) patchAttn[i] = (patchAttn[i] - mn) / range;
+
+  return { data: patchAttn, gridSide };
+}
+
+/* drawRolloutHeatmap — paints the real attention-rollout grid over
+   the cropped image. Used when transformers.js gives us actual
+   per-layer attention; falls back to the synthetic per-class heatmap
+   in drawClassContrib when not. */
+function drawRolloutHeatmap(canvas, img, rollout) {
+  if (!canvas || !img || !rollout) return;
+  const size = 260;
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+
+  const w = img.naturalWidth || img.width;
+  const h = img.naturalHeight || img.height;
+  const crop = Math.min(w, h);
+  ctx.drawImage(img, (w - crop) / 2, (h - crop) / 2, crop, crop, 0, 0, size, size);
+  ctx.fillStyle = 'rgba(10, 14, 26, 0.72)';
+  ctx.fillRect(0, 0, size, size);
+
+  const { data, gridSide } = rollout;
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function colormap(t) {
+    const stops = [
+      [0.00,  10,  10,  30],
+      [0.25,  50,  10,  90],
+      [0.50, 200,  40, 110],
+      [0.75, 250, 130,  40],
+      [1.00, 255, 240, 100],
+    ];
+    for (let s = 1; s < stops.length; s++) {
+      if (t <= stops[s][0]) {
+        const a = stops[s - 1], b = stops[s];
+        const u = (t - a[0]) / (b[0] - a[0]);
+        return [lerp(a[1], b[1], u), lerp(a[2], b[2], u), lerp(a[3], b[3], u)];
+      }
+    }
+    return [stops[4][1], stops[4][2], stops[4][3]];
+  }
+
+  const cell = size / gridSide;
+  for (let py = 0; py < gridSide; py++) {
+    for (let px = 0; px < gridSide; px++) {
+      const v = data[py * gridSide + px];
+      const t = Math.pow(v, 1.6);
+      const [r, g, b] = colormap(t);
+      const a = 0.10 + Math.min(0.82, t * 0.9);
+      ctx.fillStyle = `rgba(${r | 0}, ${g | 0}, ${b | 0}, ${a})`;
+      ctx.fillRect(px * cell - 0.5, py * cell - 0.5, cell + 1, cell + 1);
+    }
+  }
+  ctx.filter = 'blur(6px)';
+  ctx.globalCompositeOperation = 'screen';
+  ctx.drawImage(canvas, 0, 0);
+  ctx.filter = 'none';
+  ctx.globalCompositeOperation = 'source-over';
+}
+
 function drawClassContrib(canvas, img, attentionRows, gridN, classIdx) {
   if (!canvas || !img || !attentionRows) return;
   const size = 260;
@@ -4486,19 +4625,24 @@ function drawClassContrib(canvas, img, attentionRows, gridN, classIdx) {
    clickable top-5 prediction list. Concrete answer to "why this class?".
    Self-contained loading UI so it can replace the standalone predictions
    panel. */
-function ClassContribution({ image, attentionRows, gridN, preds, status, statusMessage, statusProgress }) {
+function ClassContribution({ image, attentionRows, gridN, preds, status, statusMessage, statusProgress, rollout }) {
   const [classIdx, setClassIdx] = useState(0);
   const canvasRef = useRef(null);
 
   useEffect(() => { setClassIdx(0); }, [preds]);
 
   useEffect(() => {
-    if (!canvasRef.current || !image || !attentionRows) return;
-    drawClassContrib(canvasRef.current, image, attentionRows, gridN, classIdx);
-  }, [image, attentionRows, gridN, classIdx]);
+    if (!canvasRef.current || !image) return;
+    if (rollout) {
+      drawRolloutHeatmap(canvasRef.current, image, rollout);
+    } else if (attentionRows) {
+      drawClassContrib(canvasRef.current, image, attentionRows, gridN, classIdx);
+    }
+  }, [image, attentionRows, gridN, classIdx, rollout]);
 
   const top5 = (preds || []).slice(0, 5);
   const loading = status === 'modelLoading' || status === 'inferring';
+  const isReal = !!rollout;
 
   return (
     <div className="flex gap-3 items-start flex-wrap">
@@ -4507,12 +4651,14 @@ function ClassContribution({ image, attentionRows, gridN, preds, status, statusM
           ref={canvasRef}
           className="w-[180px] h-[180px] rounded bg-slate-950 block"
         />
-        <div className="text-[10px] font-mono text-slate-500 mt-1 text-center w-[180px] truncate">
-          {top5[classIdx]
-            ? <>evidence for <span className="text-amber-300">"{top5[classIdx].label}"</span></>
-            : status === 'modelLoading' ? `loading model · ${statusProgress || 0}%`
-            : status === 'inferring' ? 'running ViT-Base…'
-            : 'waiting for predictions'}
+        <div className="text-[10px] font-mono text-slate-500 mt-1 text-center w-[180px] leading-snug">
+          {isReal
+            ? <span><span className="text-teal-300">attention rollout</span><br/>real ViT-B/16 · class-agnostic</span>
+            : top5[classIdx]
+              ? <>evidence for <span className="text-amber-300">"{top5[classIdx].label}"</span> <span className="text-slate-600">(illustrative)</span></>
+              : status === 'modelLoading' ? `loading model · ${statusProgress || 0}%`
+              : status === 'inferring' ? 'running ViT-Base…'
+              : 'waiting for predictions'}
         </div>
       </div>
 
@@ -5045,6 +5191,7 @@ function LiveDemoTab() {
   const [modelMessage, setModelMessage] = useState('Loading transformers.js…');
   const [modelProgress, setModelProgress] = useState(0);
   const [realPreds, setRealPreds] = useState(null);
+  const [rollout, setRollout] = useState(null); // real attention rollout from ViT-B/16 if available
 
   const vitRef = useRef();
   const swinRef = useRef();
@@ -5096,7 +5243,10 @@ function LiveDemoTab() {
     return () => clearInterval(id);
   }, [playing, speed]);
 
-  // Load the in-browser ViT pipeline once on mount.
+  // Load the in-browser ViT model + processor once on mount. We use
+  // AutoModelForImageClassification (not the high-level pipeline) so we
+  // can pass output_attentions:true to the forward call and pull real
+  // per-layer attention out for the rollout heatmap.
   useEffect(() => {
     let canceled = false;
     (async () => {
@@ -5105,19 +5255,17 @@ function LiveDemoTab() {
         const mod = await import('@huggingface/transformers');
         mod.env.allowLocalModels = false;
         setModelMessage('Downloading ViT-Base/16 (~88 MB · cached after)');
-        const cls = await mod.pipeline(
-          'image-classification',
-          'Xenova/vit-base-patch16-224',
-          {
-            progress_callback: (data) => {
-              if (data.status === 'progress' && !canceled) {
-                setModelProgress(Math.round(data.progress || 0));
-              }
-            },
+        const progressCb = (data) => {
+          if (data.status === 'progress' && !canceled) {
+            setModelProgress(Math.round(data.progress || 0));
           }
-        );
+        };
+        const [processor, model] = await Promise.all([
+          mod.AutoProcessor.from_pretrained('Xenova/vit-base-patch16-224', { progress_callback: progressCb }),
+          mod.AutoModelForImageClassification.from_pretrained('Xenova/vit-base-patch16-224', { progress_callback: progressCb }),
+        ]);
         if (canceled) return;
-        classifierRef.current = cls;
+        classifierRef.current = { processor, model, RawImage: mod.RawImage };
         setModelMessage('');
         setModelReady(true);
       } catch (err) {
@@ -5130,22 +5278,58 @@ function LiveDemoTab() {
     return () => { canceled = true; };
   }, []);
 
-  // Run inference on every image change once the model is loaded.
+  // Run inference on every image change once the model is loaded. We
+  // call the model with output_attentions:true; if the ONNX export
+  // returns attention tensors we compute attention rollout, otherwise
+  // we fall back to the synthetic per-class heatmap.
   useEffect(() => {
     if (!modelReady || !imgSrc) return;
     let canceled = false;
     setModelStatus('inferring');
     setRealPreds(null);
+    setRollout(null);
     (async () => {
       try {
-        const out = await classifierRef.current(imgSrc, { topk: 5 });
+        const { processor, model, RawImage } = classifierRef.current;
+        const image = await RawImage.read(imgSrc);
+        const inputs = await processor(image);
+        const outputs = await model({ ...inputs, output_attentions: true });
         if (canceled) return;
-        const cleaned = out.map(p => {
-          const first = String(p.label || '').split(',')[0].trim();
+
+        // Top-5 from logits using the model's id2label.
+        const logits = outputs.logits.data;
+        const probs = (() => {
+          let mx = -Infinity;
+          for (let i = 0; i < logits.length; i++) if (logits[i] > mx) mx = logits[i];
+          const ex = new Float32Array(logits.length);
+          let sum = 0;
+          for (let i = 0; i < logits.length; i++) { ex[i] = Math.exp(logits[i] - mx); sum += ex[i]; }
+          for (let i = 0; i < logits.length; i++) ex[i] /= sum;
+          return ex;
+        })();
+        const id2label = model.config?.id2label || {};
+        const ranked = Array.from(probs).map((p, i) => ({ p, i }))
+          .sort((a, b) => b.p - a.p).slice(0, 5);
+        const cleaned = ranked.map(({ p, i }) => {
+          const full = id2label[i] || id2label[String(i)] || `class_${i}`;
+          const first = String(full).split(',')[0].trim();
           const label = first ? first[0].toUpperCase() + first.slice(1) : first;
-          return { ...p, label };
+          return { label, score: p };
         });
         setRealPreds(cleaned);
+
+        // Attention rollout — only if the ONNX export emitted attentions.
+        if (outputs.attentions && outputs.attentions.length > 0) {
+          // eslint-disable-next-line no-console
+          console.log('[ViT] received', outputs.attentions.length, 'attention tensors — computing rollout');
+          const heat = computeAttentionRollout(outputs.attentions);
+          if (heat) setRollout(heat);
+          else console.warn('[ViT] rollout computation returned null');
+        } else {
+          // eslint-disable-next-line no-console
+          console.warn('[ViT] outputs.attentions is empty — ONNX export likely does not expose attention. Falling back to synthetic heatmap.');
+        }
+
         setModelStatus('ready');
       } catch (err) {
         if (!canceled) {
@@ -5327,6 +5511,7 @@ function LiveDemoTab() {
             status={ccStatus}
             statusMessage={modelMessage}
             statusProgress={modelProgress}
+            rollout={rollout}
           />
         </Card>
       </div>
