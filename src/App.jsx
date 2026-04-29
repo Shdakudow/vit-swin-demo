@@ -4690,25 +4690,34 @@ function ClassContribution({ image, attentionRows, gridN, preds, status, statusM
 
         {top5.map((p, i) => {
           const active = classIdx === i;
+          const pct = p.score * 100;
+          // Floor the bar width at 4 % so a 0.3 %-likely class is still
+          // clearly visible. Show one decimal place for sub-10 %
+          // numbers, integer percent above that.
+          const barWidth = Math.max(4, pct);
+          const pctText = pct >= 10 ? `${pct.toFixed(0)}%` : `${pct.toFixed(1)}%`;
           return (
             <button
               key={i}
               onClick={() => setClassIdx(i)}
-              className={`w-full text-left px-2 py-1 rounded border transition-all
+              className={`w-full text-left px-2.5 py-1.5 rounded border transition-all
                 ${active
                   ? 'bg-amber-500/15 border-amber-500/50 text-amber-100'
                   : 'bg-slate-800/30 border-slate-700/50 hover:border-slate-600 text-slate-300'}`}
             >
-              <div className="flex justify-between items-center text-[11px] gap-2 leading-tight">
-                <span className="truncate">{p.label}</span>
-                <span className={`font-mono shrink-0 ${active ? 'text-amber-300' : 'text-slate-400'}`}>
-                  {(p.score * 100).toFixed(0)}%
+              <div className="flex justify-between items-center text-[12px] gap-2 leading-snug">
+                <span className="flex items-center gap-1.5 min-w-0">
+                  <span className={`font-mono text-[10px] shrink-0 ${active ? 'text-amber-400' : 'text-slate-500'}`}>#{i + 1}</span>
+                  <span className="truncate">{p.label}</span>
+                </span>
+                <span className={`font-mono tabular-nums shrink-0 ${active ? 'text-amber-300' : 'text-slate-300'}`}>
+                  {pctText}
                 </span>
               </div>
-              <div className="h-1 bg-slate-800 rounded mt-0.5 overflow-hidden">
+              <div className="h-2 bg-slate-800 rounded mt-1 overflow-hidden">
                 <div
                   className={`h-full transition-all ${active ? 'bg-amber-400' : 'bg-slate-500'}`}
-                  style={{ width: `${p.score * 100}%` }}
+                  style={{ width: `${barWidth}%` }}
                 />
               </div>
             </button>
