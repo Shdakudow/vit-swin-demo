@@ -4487,6 +4487,57 @@ function computeAttentionRollout(attentions) {
   return { data: patchAttn, gridSide };
 }
 
+/* computeOcclusionMap — runs the ViT model 7×7=49 times on a single
+   image, masking one block of the input tensor each time, and returns
+   the per-block drop in the target class's probability. The drop tells
+   us how much that block contributed to the prediction — real,
+   class-conditional evidence (no gradients needed).
+
+   Operates in normalized tensor space so we don't re-run the
+   processor for each block; the cost is just 49 × forward pass. */
+async function computeOcclusionMap({ Tensor, model, baseTensor, classIdx, baselineProb, blocksSide = 7, onProgress }) {
+  const dims = baseTensor.dims;        // [1, 3, 224, 224]
+  const [, C, H, W] = dims;
+  const blockH = H / blocksSide;
+  const blockW = W / blocksSide;
+  const total = blocksSide * blocksSide;
+  const out = new Float32Array(total);
+
+  const baseData = baseTensor.data;
+  const TypedArr = baseData.constructor;
+
+  for (let i = 0; i < total; i++) {
+    const br = Math.floor(i / blocksSide);
+    const bc = i % blocksSide;
+    const x0 = Math.floor(bc * blockW), x1 = Math.floor((bc + 1) * blockW);
+    const y0 = Math.floor(br * blockH), y1 = Math.floor((br + 1) * blockH);
+
+    const masked = new TypedArr(baseData);
+    for (let c = 0; c < C; c++) {
+      for (let y = y0; y < y1; y++) {
+        const rowStart = c * H * W + y * W;
+        for (let x = x0; x < x1; x++) masked[rowStart + x] = 0;
+      }
+    }
+
+    const maskedTensor = new Tensor(baseTensor.type, masked, dims);
+    const result = await model({ pixel_values: maskedTensor });
+    const logits = result.logits.data;
+
+    let mx = -Infinity;
+    for (let k = 0; k < logits.length; k++) if (logits[k] > mx) mx = logits[k];
+    let sum = 0;
+    for (let k = 0; k < logits.length; k++) sum += Math.exp(logits[k] - mx);
+    const targetExp = Math.exp(logits[classIdx] - mx);
+    const maskedProb = targetExp / sum;
+
+    out[i] = Math.max(0, baselineProb - maskedProb);
+    if (onProgress) onProgress((i + 1) / total);
+  }
+
+  return { data: out, gridSide: blocksSide };
+}
+
 /* drawRolloutHeatmap — paints the real attention-rollout grid over
    the cropped image. Used when transformers.js gives us actual
    per-layer attention; falls back to the synthetic per-class heatmap
@@ -4625,40 +4676,96 @@ function drawClassContrib(canvas, img, attentionRows, gridN, classIdx) {
    clickable top-5 prediction list. Concrete answer to "why this class?".
    Self-contained loading UI so it can replace the standalone predictions
    panel. */
-function ClassContribution({ image, attentionRows, gridN, preds, status, statusMessage, statusProgress, rollout }) {
+function ClassContribution({ image, attentionRows, gridN, preds, status, statusMessage, statusProgress, rollout, requestOcclusion }) {
   const [classIdx, setClassIdx] = useState(0);
   const canvasRef = useRef(null);
+  // Per-class occlusion-map state (real per-class evidence). Cached
+  // outside via requestOcclusion; this component only tracks which
+  // class's map is currently displayed plus the in-flight progress.
+  const [occlusionByClass, setOcclusionByClass] = useState({});
+  const [occlProgress, setOcclProgress] = useState(0);
+  const [occlComputing, setOcclComputing] = useState(false);
 
-  useEffect(() => { setClassIdx(0); }, [preds]);
+  // New image / new predictions → reset everything.
+  useEffect(() => {
+    setClassIdx(0);
+    setOcclusionByClass({});
+    setOcclComputing(false);
+    setOcclProgress(0);
+  }, [preds]);
+
+  // Whenever the user picks a class, fetch (or compute) its occlusion
+  // map. Once available it overrides the rollout heatmap for that
+  // class so each rank actually shows different evidence.
+  useEffect(() => {
+    if (!requestOcclusion || !preds || preds.length === 0) return;
+    if (occlusionByClass[classIdx]) return; // cached
+    let canceled = false;
+    setOcclComputing(true);
+    setOcclProgress(0);
+    (async () => {
+      try {
+        const heat = await requestOcclusion(classIdx, (p) => {
+          if (!canceled) setOcclProgress(p);
+        });
+        if (canceled || !heat) return;
+        setOcclusionByClass(prev => ({ ...prev, [classIdx]: heat }));
+      } finally {
+        if (!canceled) setOcclComputing(false);
+      }
+    })();
+    return () => { canceled = true; };
+  }, [classIdx, requestOcclusion, preds, occlusionByClass]);
+
+  const activeOcclusion = occlusionByClass[classIdx] || null;
 
   useEffect(() => {
     if (!canvasRef.current || !image) return;
-    if (rollout) {
+    if (activeOcclusion) {
+      drawRolloutHeatmap(canvasRef.current, image, activeOcclusion);
+    } else if (rollout) {
       drawRolloutHeatmap(canvasRef.current, image, rollout);
     } else if (attentionRows) {
       drawClassContrib(canvasRef.current, image, attentionRows, gridN, classIdx);
     }
-  }, [image, attentionRows, gridN, classIdx, rollout]);
+  }, [image, attentionRows, gridN, classIdx, rollout, activeOcclusion]);
 
   const top5 = (preds || []).slice(0, 5);
   const loading = status === 'modelLoading' || status === 'inferring';
   const isReal = !!rollout;
+  const isOccl = !!activeOcclusion;
 
   return (
     <div className="flex gap-3 items-start flex-wrap">
       <div className="flex-shrink-0">
-        <canvas
-          ref={canvasRef}
-          className="w-[180px] h-[180px] rounded bg-slate-950 block"
-        />
+        <div className="relative w-[180px] h-[180px]">
+          <canvas
+            ref={canvasRef}
+            className="w-[180px] h-[180px] rounded bg-slate-950 block"
+          />
+          {occlComputing && (
+            <div className="absolute inset-0 rounded bg-slate-950/55 backdrop-blur-[1px] flex flex-col items-center justify-center gap-1.5 pointer-events-none">
+              <Loader2 size={18} className="animate-spin text-amber-300" />
+              <div className="text-[10px] font-mono text-amber-200">computing evidence…</div>
+              <div className="w-[120px] h-1 bg-slate-800 rounded overflow-hidden">
+                <div className="h-full bg-amber-400 transition-all" style={{ width: `${(occlProgress * 100).toFixed(0)}%` }} />
+              </div>
+              <div className="text-[10px] font-mono text-slate-400">{(occlProgress * 100).toFixed(0)}%</div>
+            </div>
+          )}
+        </div>
         <div className="text-[10px] font-mono text-slate-500 mt-1 text-center w-[180px] leading-snug">
-          {isReal
-            ? <span><span className="text-teal-300">attention rollout</span><br/>real ViT-B/16 · class-agnostic</span>
-            : top5[classIdx]
-              ? <>evidence for <span className="text-amber-300">"{top5[classIdx].label}"</span> <span className="text-slate-600">(illustrative)</span></>
-              : status === 'modelLoading' ? `loading model · ${statusProgress || 0}%`
-              : status === 'inferring' ? 'running ViT-Base…'
-              : 'waiting for predictions'}
+          {isOccl && top5[classIdx]
+            ? <span><span className="text-amber-300">occlusion · {top5[classIdx].label}</span><br/>per-block prob drop · real</span>
+            : occlComputing
+              ? <span>computing per-class evidence…</span>
+              : isReal
+                ? <span><span className="text-teal-300">attention rollout</span><br/>real ViT-B/16 · class-agnostic</span>
+                : top5[classIdx]
+                  ? <>evidence for <span className="text-amber-300">"{top5[classIdx].label}"</span> <span className="text-slate-600">(illustrative)</span></>
+                  : status === 'modelLoading' ? `loading model · ${statusProgress || 0}%`
+                  : status === 'inferring' ? 'running ViT-Base…'
+                  : 'waiting for predictions'}
         </div>
       </div>
 
@@ -5201,6 +5308,10 @@ function LiveDemoTab() {
   const [modelProgress, setModelProgress] = useState(0);
   const [realPreds, setRealPreds] = useState(null);
   const [rollout, setRollout] = useState(null); // real attention rollout from ViT-B/16 if available
+  // Cache the baseline pixel tensor + softmax probs + per-class
+  // occlusion maps so clicking a class triggers compute only the first
+  // time per (image, class) pair.
+  const occlusionStateRef = useRef({ baseTensor: null, baseProbs: null, top5Idx: null, Tensor: null, maps: {} });
 
   const vitRef = useRef();
   const swinRef = useRef();
@@ -5297,6 +5408,8 @@ function LiveDemoTab() {
     setModelStatus('inferring');
     setRealPreds(null);
     setRollout(null);
+    // Reset occlusion cache for the new image.
+    occlusionStateRef.current = { baseTensor: null, baseProbs: null, top5Idx: null, Tensor: null, maps: {} };
     (async () => {
       try {
         const { processor, model, RawImage } = classifierRef.current;
@@ -5323,9 +5436,19 @@ function LiveDemoTab() {
           const full = id2label[i] || id2label[String(i)] || `class_${i}`;
           const first = String(full).split(',')[0].trim();
           const label = first ? first[0].toUpperCase() + first.slice(1) : first;
-          return { label, score: p };
+          return { label, score: p, modelIdx: i };
         });
         setRealPreds(cleaned);
+
+        // Stash everything the occlusion compute needs.
+        const mod = await import('@huggingface/transformers');
+        occlusionStateRef.current = {
+          baseTensor: inputs.pixel_values,
+          baseProbs: probs,
+          top5Idx: ranked.map(r => r.i),
+          Tensor: mod.Tensor,
+          maps: {},
+        };
 
         // Attention rollout — only if the ONNX export emitted attentions.
         if (outputs.attentions && outputs.attentions.length > 0) {
@@ -5349,6 +5472,28 @@ function LiveDemoTab() {
     })();
     return () => { canceled = true; };
   }, [modelReady, imgSrc]);
+
+  // Lazy occlusion compute exposed to ClassContribution: returns a
+  // cached Float32Array(49) of per-block importance for the requested
+  // top-5 rank, or kicks off compute if not cached.
+  const requestOcclusion = useCallback(async (rankIdx, onProgress) => {
+    const st = occlusionStateRef.current;
+    if (!st || !st.baseTensor || !st.top5Idx) return null;
+    if (st.maps[rankIdx]) return st.maps[rankIdx];
+    const classModelIdx = st.top5Idx[rankIdx];
+    const baselineProb = st.baseProbs[classModelIdx];
+    const heat = await computeOcclusionMap({
+      Tensor: st.Tensor,
+      model: classifierRef.current.model,
+      baseTensor: st.baseTensor,
+      classIdx: classModelIdx,
+      baselineProb,
+      blocksSide: 7,
+      onProgress,
+    });
+    st.maps[rankIdx] = heat;
+    return heat;
+  }, []);
 
   // Status string passed to the predictions panel inside ClassContribution.
   const ccStatus = !modelReady ? 'modelLoading'
@@ -5521,6 +5666,7 @@ function LiveDemoTab() {
             statusMessage={modelMessage}
             statusProgress={modelProgress}
             rollout={rollout}
+            requestOcclusion={requestOcclusion}
           />
         </Card>
       </div>
